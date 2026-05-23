@@ -824,6 +824,43 @@ jobs:
           print("EggGameHttpConfig: base URL redirected to embedded NanoHttpd.")
           PYEOF
 
+      - name: Neutralize OfflineCacheInterceptor (force network-available)
+        run: |
+          python3 << 'PYEOF'
+          import re, sys
+          path = 'apktool_out_base/smali_classes3/com/xj/common/http/interceptor/OfflineCacheInterceptor.smali'
+          content = open(path, encoding='utf-8').read()
+          # The interceptor's a() method probes ConnectivityManager. In airplane mode
+          # it returns false, which makes intercept() bypass the actual HTTP call and
+          # fall back to OkHttp's onlyIfCached path. On a fresh install that cache is
+          # empty so /card/getTopPlatform, /devices/getDevicesList,
+          # /simulator/v2/getAllComponentList all fail (no Steam/Windows tabs, no
+          # component picker). Since every URL the app hits is now 127.0.0.1, the
+          # real-network check is meaningless. Force a()->true; b() refreshes from
+          # a() within 1s so the whole gating disappears.
+          pattern = re.compile(
+              r'\.method public final a\(\)Z\n.*?\.end method\n',
+              re.DOTALL,
+          )
+          replacement = (
+              '.method public final a()Z\n'
+              '    .locals 1\n'
+              '    # BannerHub Nano Offline: always claim network-available so the\n'
+              '    # interceptor proceeds to chain.proceed(request). Every call is\n'
+              '    # 127.0.0.1 anyway; the system-level connectivity check is\n'
+              '    # actively harmful here.\n'
+              '    const/4 v0, 0x1\n'
+              '    return v0\n'
+              '.end method\n'
+          )
+          new_content, n = pattern.subn(replacement, content, count=1)
+          if n != 1:
+              print("ERROR: a()Z method anchor not found in OfflineCacheInterceptor.smali")
+              sys.exit(1)
+          open(path, 'w', encoding='utf-8').write(new_content)
+          print("OfflineCacheInterceptor.a(): patched to always return true (network-available).")
+          PYEOF
+
       - name: Cache bundled CDN binaries
         uses: actions/cache@v4
         with:
