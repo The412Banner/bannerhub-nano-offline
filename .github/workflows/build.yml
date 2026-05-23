@@ -749,6 +749,36 @@ jobs:
           print("Offline Launch patch applied.")
           PYEOF
 
+      - name: Patch EggGameHttpConfig — redirect base URL to embedded NanoHttpd
+        run: |
+          python3 << 'PYEOF'
+          import sys
+          path = 'apktool_out_base/smali_classes13/com/xj/common/http/EggGameHttpConfig.smali'
+          content = open(path, encoding='utf-8').read()
+          old = (
+              '    :goto_0\n'
+              '    invoke-static {v0}, Lapp/revanced/extension/gamehub/prefs/GameHubPrefs;->getEffectiveApiUrl(Ljava/lang/String;)Ljava/lang/String;\n'
+              '\n'
+              '    move-result-object v0\n'
+              '\n'
+              '    sput-object v0, Lcom/xj/common/http/EggGameHttpConfig;->b:Ljava/lang/String;\n'
+          )
+          new = (
+              '    :goto_0\n'
+              '    # BannerHub Nano Offline: lazy-start embedded server, force localhost base URL.\n'
+              '    invoke-static {}, Lapp/revanced/extension/gamehub/server/BannerHubLocalServer;->startIfNotRunning()V\n'
+              '\n'
+              '    const-string v0, "http://127.0.0.1:8765/"\n'
+              '\n'
+              '    sput-object v0, Lcom/xj/common/http/EggGameHttpConfig;->b:Ljava/lang/String;\n'
+          )
+          if old not in content:
+              print("ERROR: anchor not found in EggGameHttpConfig.smali")
+              sys.exit(1)
+          open(path, 'w', encoding='utf-8').write(content.replace(old, new, 1))
+          print("EggGameHttpConfig: base URL redirected to embedded NanoHttpd.")
+          PYEOF
+
       - name: Bundle local API mirror (NanoHttpd offline)
         run: |
           # Pull bannerhub-api's pre-generated static catalog (components/ + simulator/)

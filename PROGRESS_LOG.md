@@ -79,9 +79,42 @@ Both workflows updated:
 
 ### Still pending before first CI run
 
-- [ ] Upload `Gamehub-5.3.5-Revanced-Normal.apk` to a `base-apk` release on `bannerhub-nano-offline` — both workflows do `gh release download base-apk -R ${{ github.repository }}` so the new repo needs its own copy
-- [ ] Commit + push the code changes
-- [ ] Trigger `build-quick.yml` via workflow_dispatch
-- [ ] Pull artifact, device-test
+- [x] Upload `Gamehub-5.3.5-Revanced-Normal.apk` to a `base-apk` release on `bannerhub-nano-offline` — done, base-apk release live
+- [x] Commit + push the code changes — done (`9eeaa36`)
+- [x] Trigger `build-quick.yml` via workflow_dispatch — done (run 26333583051)
+- [ ] Pull artifact, device-test — **BLOCKED, first run failed; see below**
+
+---
+
+## 2026-05-23 — First CI run RED (run 26333583051) — dex64K overflow on smali_classes6
+
+All offline-nano-specific steps PASSED:
+- ✓ Bundle local API mirror (NanoHttpd offline)
+- ✓ Install network security config (cleartext to 127.0.0.1 only)
+- ✓ Patch package name and label for offline-nano
+
+Failure in the "Rebuild and Sign" step at `apktool b`:
+
+```
+I: Smaling smali_classes6 folder into classes6.dex...
+Exception in thread "main" com.android.tools.smali.util.ExceptionWithContext:
+  Exception occurred while writing code_item for method
+  Lorg/yaml/snakeyaml/nodes/NodeId;->values()[Lorg/yaml/snakeyaml/nodes/NodeId;
+Caused by: com.android.tools.smali.util.ExceptionWithContext:
+  Unsigned short value out of range: 65536
+    at com.android.tools.smali.dexlib2.writer.DexDataWriter.writeUshort
+```
+
+**Root cause:** `smali_classes6`'s dex reference table was already at/near the 64K limit in the BannerHub v3.7.5 baseline. My patched `getEffectiveApiUrl` added a NEW type ref (`Lapp/revanced/extension/gamehub/server/BannerHubLocalServer;`) + method ref (`startIfNotRunning()V`) to smali_classes6's ref table — overflow. The `NodeId.values()` snakeyaml mention in the error is a red herring (just where the writer happened to be when it hit the overflow during write-out).
+
+**Fix:** relocate the chokepoint. Instead of patching `GameHubPrefs.smali` (smali_classes6, saturated), patch `EggGameHttpConfig.smali` (smali_classes13, has headroom):
+
+- Revert `patches/smali_classes6/.../GameHubPrefs.smali` to original (no-op for offline since EggGameHttpConfig is the actual base-URL field setter)
+- Add inline build.yml step that patches `apktool_out/smali_classes13/com/xj/common/http/EggGameHttpConfig.smali` `<clinit>` body around line 129 — replace the `invoke-static getEffectiveApiUrl` block with `BannerHubLocalServer.startIfNotRunning()` + `const-string "http://127.0.0.1:8765/"`
+- Net effect: same runtime behavior (every Retrofit/OkHttp base URL hits localhost), but the BannerHubLocalServer ref lives in smali_classes13 instead of smali_classes6
+
+Other callers of `getEffectiveApiUrl` (ADB wifi HttpConfig in smali_classes9, GameHubPrefs self-ref) keep upstream behavior — irrelevant offline.
+
+If smali_classes13 also overflows, fallback: use `Class.forName` reflection from EggGameHttpConfig (no new type ref).
 
 ---
