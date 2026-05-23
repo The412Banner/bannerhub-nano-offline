@@ -889,16 +889,34 @@ jobs:
           print("EggGameHttpConfig: base URL redirected to embedded NanoHttpd.")
           PYEOF
 
+      - name: Cache bundled CDN binaries
+        uses: actions/cache@v4
+        with:
+          path: cdn-cache
+          key: cdn-${{ hashFiles('data/bundled-components.json') }}
+
       - name: Bundle local API mirror (NanoHttpd offline)
         run: |
           # Pull bannerhub-api's pre-generated static catalog (components/ + simulator/)
           git clone --depth=1 https://github.com/The412Banner/bannerhub-api.git /tmp/bannerhub-api
-          mkdir -p apktool_out/assets/local-mirror
+          mkdir -p apktool_out/assets/local-mirror/components-cdn
+          # Seed components-cdn from the cache if present, so prepare_local_mirror
+          # skips re-downloading any binary it has already fetched in a prior run.
+          if [ -d cdn-cache ] && [ -n "$(ls -A cdn-cache 2>/dev/null)" ]; then
+            cp -al cdn-cache/. apktool_out/assets/local-mirror/components-cdn/ 2>/dev/null \
+              || cp -a cdn-cache/. apktool_out/assets/local-mirror/components-cdn/
+            echo "Seeded $(ls apktool_out/assets/local-mirror/components-cdn/ | wc -l) files from cache."
+          fi
           python3 scripts/prepare_local_mirror.py \
             --src /tmp/bannerhub-api \
             --dst apktool_out/assets/local-mirror \
             --base-url http://127.0.0.1:51823 \
-            --overrides-dir data/local-mirror-overrides
+            --overrides-dir data/local-mirror-overrides \
+            --bundled-components data/bundled-components.json
+          # Refresh cache dir so the next run sees this APK's CDN payload.
+          mkdir -p cdn-cache
+          cp -al apktool_out/assets/local-mirror/components-cdn/. cdn-cache/ 2>/dev/null \
+            || cp -a apktool_out/assets/local-mirror/components-cdn/. cdn-cache/
 
       - name: Install network security config (cleartext to 127.0.0.1 only)
         run: |

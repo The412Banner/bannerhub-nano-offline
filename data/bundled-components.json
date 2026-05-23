@@ -1,0 +1,45 @@
+{
+  "_comment": "Components shipped inside the offline-nano APK. Manifests are trimmed to only include these IDs, and matching binaries are downloaded from bannerhub-api GH Releases at build time into assets/local-mirror/components-cdn/. In-app menus only show what is bundled.",
+  "_target_branch": "V5 (gamehub-5.x). BannerHub 3.7.5 = 5.3.5. Static catalog is V5-native; V6 reshape does not apply here.",
+
+  "manifests": {
+    "box64_manifest": {
+      "_comment": "Box64/Fex x86_64 emulator binaries. Includes install-script-required Fex-20251025 (id=345).",
+      "include": [1331, 1337, 1315, 1314, 345]
+    },
+    "dxvk_manifest": {
+      "_comment": "DXVK x64 + a couple arm64ec kept for future arm64x container imports. Includes install-script-required dxvk-2.3.1-async (id=25).",
+      "include": [225, 270, 1144, 1150, 222, 259, 21, 25]
+    },
+    "vkd3d_manifest": {
+      "_comment": "VKD3D-Proton x64 + arm64ec. Includes install-script-required vkd3d-2.12 (id=7).",
+      "include": [1298, 1299, 356, 59, 7]
+    },
+    "drivers_manifest": {
+      "_comment": "Qualcomm Adreno (closed) + Turnip (open Mesa) + Snapdragon Elite. Includes install-script-required turnip_v25.0.0_R1 (id=48).",
+      "include": [210, 272, 276, 284, 260, 48]
+    },
+    "steam_manifest": {
+      "_comment": "Empty — offline users never sign into Steam. steamClient default stubbed in getDefaultComponent override.",
+      "include": []
+    },
+    "libraries_manifest": {
+      "_comment": "All 117 entries (winetricks-style installers, ~1 MB total). Cheap to include.",
+      "include": "all"
+    },
+    "games_manifest": {
+      "_comment": "All *_Settings entries <1 MB plus base.tzst (id=8). Wine container archives in this manifest are skipped — containers section below handles those. Excluded IDs 236 (Torchlight II), 291 (WRC 9), 310 (Resident Evil 3) — catalog references them but binaries were never uploaded to GH Releases (404).",
+      "include": [8, 186, 204, 209, 212, 213, 214, 216, 217, 218, 219, 221, 226, 227, 230, 233, 238, 254, 277, 288, 295, 297, 301, 308, 309, 315, 339, 340, 359, 360, 361, 365, 366, 367, 368, 370, 371, 372, 377, 379, 382, 1295]
+    }
+  },
+
+  "containers": {
+    "_comment": "Wine/Proton containers from simulator/v2/getContainerDetail/<id>. Bundling fetches both the wine archive AND the sub_data (wineprefix) for each id.",
+    "include": [10]
+  },
+
+  "imagefs": {
+    "_comment": "Shared Linux rootfs (Firmware 1.4.1). Required for any container to boot.",
+    "include": true
+  }
+}

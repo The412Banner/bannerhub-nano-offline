@@ -1,0 +1,181 @@
+{
+  "code": 200,
+  "msg": "Success",
+  "data": {
+    "audio_driver": 1,
+    "component": [
+      {
+        "base_type": 0,
+        "blurb": "",
+        "display_name": "",
+        "download_url": "https://github.com/The412Banner/bannerhub-api/releases/download/Components/vkd3d-2.12.tzst",
+        "file_md5": "4f3e99438281f7749cb2b8b2412c9d10",
+        "file_name": "vkd3d-2.12.tzst",
+        "file_size": 2643215,
+        "id": 7,
+        "is_base": 0,
+        "is_ui": 1,
+        "logo": "https://github.com/The412Banner/bannerhub-api/releases/download/Components/45e60d211d35955bd045aabfded4e64b.png",
+        "name": "vkd3d-2.12",
+        "type": 4,
+        "version": "1.1.1",
+        "version_code": 1
+      },
+      {
+        "base_type": 0,
+        "blurb": "",
+        "display_name": "",
+        "download_url": "https://github.com/The412Banner/bannerhub-api/releases/download/Components/base_v101.tzst",
+        "file_md5": "96df60f3cff612a9747e56cae9d4c6e8",
+        "file_name": "base.tzst",
+        "file_size": 83424612,
+        "id": 8,
+        "is_base": 0,
+        "is_ui": 1,
+        "logo": "https://github.com/The412Banner/bannerhub-api/releases/download/Components/45e60d211d35955bd045aabfded4e64b.png",
+        "name": "base",
+        "type": 5,
+        "version": "1.0.1",
+        "version_code": 2
+      },
+      {
+        "base_type": 0,
+        "blurb": "",
+        "display_name": "",
+        "download_url": "https://github.com/The412Banner/bannerhub-api/releases/download/Components/dxvk-async-1.10.3.tzst",
+        "file_md5": "e6041eb8b5e8596e33bf0da1b9a4342f",
+        "file_name": "dxvk-async-1.10.3.tzst",
+        "file_size": 7850661,
+        "id": 24,
+        "is_base": 0,
+        "is_ui": 1,
+        "logo": "https://github.com/The412Banner/bannerhub-api/releases/download/Components/45e60d211d35955bd045aabfded4e64b.png",
+        "name": "dxvk-1.10.3-async",
+        "type": 3,
+        "version": "1.1.0",
+        "version_code": 7
+      },
+      {
+        "base_type": 0,
+        "blurb": "",
+        "display_name": "",
+        "download_url": "https://github.com/The412Banner/bannerhub-api/releases/download/Components/fex-20251025.tzst",
+        "file_md5": "6d24fdf3f9e18a40d99612583f97dcc7",
+        "file_name": "fex-20251025.tzst",
+        "file_size": 11580115,
+        "id": 345,
+        "is_base": 0,
+        "is_ui": 1,
+        "logo": "https://github.com/The412Banner/bannerhub-api/releases/download/Components/45e60d211d35955bd045aabfded4e64b.png",
+        "name": "Fex-20251025",
+        "type": 1,
+        "version": "1.0.0",
+        "version_code": 1
+      }
+    ],
+    "component_ids": [
+      7,
+      8,
+      24,
+      345
+    ],
+    "container": {
+      "blurb": "",
+      "display_name": "proton10.0-x64-1",
+      "download_url": "https://github.com/The412Banner/bannerhub-api/releases/download/Components/wine_proton_10.0_x64.tar.zst",
+      "file_md5": "ac15e5a378b17aefd93adf360e875494",
+      "file_name": "wine_proton_10.0_x64.tar.zst",
+      "file_size": "164876854",
+      "framework": "X64",
+      "framework_type": "proton",
+      "id": 10,
+      "is_steam": 1,
+      "logo": "https://github.com/The412Banner/bannerhub-api/releases/download/Components/45e60d211d35955bd045aabfded4e64b.png",
+      "name": "proton10.0-x64-1",
+      "sub_data": {
+        "sub_file_name": "751b2ec403b86ddd7357206f7a85b301.tzst",
+        "sub_download_url": "https://github.com/The412Banner/bannerhub-api/releases/download/Components/751b2ec403b86ddd7357206f7a85b301.tzst",
+        "sub_file_md5": "751b2ec403b86ddd7357206f7a85b301"
+      },
+      "version": "1.0.0",
+      "version_code": 1
+    },
+    "container_id": 10,
+    "controller": {
+      "dinput": false,
+      "xinput": true,
+      "xboxLayout": false,
+      "vibration": true
+    },
+    "cpu_limitations": 0,
+    "directx_panel": 0,
+    "environment": "",
+    "execution_context": {
+      "params": [
+        "ARM",
+        78,
+        "Mali-G78",
+        0,
+        "0",
+        2
+      ],
+      "script_id": 9,
+      "timestamp": 1759470524
+    },
+    "imagefs": {
+      "display_name": "Firmware",
+      "download_url": "https://github.com/The412Banner/bannerhub-api/releases/download/Components/imagefs_141.zst",
+      "file_md5": "643024d54f11d01196ffdb2918dc3c85",
+      "file_name": "imagefs.zst",
+      "file_size": "172206649",
+      "id": 1,
+      "logo": "https://github.com/The412Banner/bannerhub-api/releases/download/Components/45e60d211d35955bd045aabfded4e64b.png",
+      "name": "Firmware",
+      "version": "1.4.1",
+      "version_code": 31
+    },
+    "launch_windowed_mode": 0,
+    "start_param": "",
+    "translations": {
+      "box64": {
+        "AlignedAtomics": "0",
+        "BigBlock": "2",
+        "Box64AVX": "0",
+        "CallRet": "0",
+        "CpuType": "0",
+        "DF": "1",
+        "DIV0": "0",
+        "Dirty": "0",
+        "Dynarec": "1",
+        "FastNan": "1",
+        "FastRound": "1",
+        "IgnoreINT3": "0",
+        "NativeFlags": "1",
+        "Pause": "0",
+        "RDTSC1GHZ": "0",
+        "SafeFlags": "0",
+        "StrongMem": "0",
+        "VolatileMetadataBox64": "1",
+        "Wait": "1",
+        "WeakBarrier": "0",
+        "X87Double": "0"
+      },
+      "fex": {
+        "HalfBarrierTSOEnabled": "1",
+        "HideHypervisorBit": "0",
+        "MaxInst": "5000",
+        "MemcpySetTSOEnabled": "0",
+        "MonoHacks": "1",
+        "Multiblock": "0",
+        "SMCChecks": "mtrack",
+        "SmallTSCScale": "1",
+        "TSOEnabled": "1",
+        "VectorTSOEnabled": "0",
+        "VolatileMetadata": "1",
+        "X87ReducedPrecision": "1"
+      }
+    },
+    "video_memory": 0
+  },
+  "time": "1774525190"
+}

@@ -27,12 +27,23 @@ Overrides (--overrides-dir): after upstream is copied + rewritten, every file
 under <overrides-dir> is copied on top of <dst> verbatim (no URL rewrite,
 preserves binary content). Use this for response-shape fixes and bundled CDN
 assets that upstream doesn't ship in the static repo.
+
+Bundled components (--bundled-components): JSON config listing which component
+IDs (per manifest) and container/imagefs files to ship inside the APK. Manifests
+are trimmed to only declared IDs (so in-app menus show exactly the bundled set)
+and every referenced .tzst/.zst is downloaded from GH Releases into
+<dst>/components-cdn/. Downloads are skipped if the file already exists with a
+matching md5, so re-runs are cheap.
 """
 
 import argparse
+import hashlib
+import json
 import os
 import shutil
 import sys
+import urllib.request
+import urllib.error
 
 UPSTREAM_CDN_PREFIX = (
     "https://github.com/The412Banner/bannerhub-api/releases/download/Components/"
@@ -77,7 +88,191 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Directory whose contents are copied on top of <dst> verbatim, after upstream + URL rewrite",
     )
+    p.add_argument(
+        "--bundled-components",
+        default=None,
+        help="JSON file declaring which manifest IDs + containers + imagefs to ship in the APK",
+    )
     return p.parse_args()
+
+
+def md5sum(path: str) -> str:
+    h = hashlib.md5()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def download_to(url: str, dest: str, expected_md5: str = "") -> tuple:
+    """Returns (status, size_bytes). status in {"downloaded","cached","md5_fail"}."""
+    if os.path.exists(dest):
+        if expected_md5 and md5sum(dest) == expected_md5:
+            return ("cached", os.path.getsize(dest))
+        if not expected_md5:
+            return ("cached", os.path.getsize(dest))
+        # md5 mismatch — re-download
+        os.remove(dest)
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    tmp = dest + ".part"
+    try:
+        with urllib.request.urlopen(url, timeout=120) as r, open(tmp, "wb") as f:
+            shutil.copyfileobj(r, f, length=1 << 20)
+    except urllib.error.HTTPError as e:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        raise RuntimeError(f"HTTP {e.code} for {url}")
+    if expected_md5:
+        got = md5sum(tmp)
+        if got != expected_md5:
+            os.remove(tmp)
+            return ("md5_fail", 0)
+    os.rename(tmp, dest)
+    return ("downloaded", os.path.getsize(dest))
+
+
+def trim_manifest(manifest_path: str, include_ids) -> tuple:
+    """Trim a _manifest JSON file in place. include_ids is a list of int IDs or
+    the string 'all'. Returns (kept_count, dropped_count, total_bytes_of_kept)."""
+    with open(manifest_path) as f:
+        j = json.load(f)
+    items = j.get("data", {}).get("components", []) or []
+    before = len(items)
+    if include_ids == "all":
+        kept = items
+    else:
+        wanted = set(int(i) for i in include_ids)
+        kept = [it for it in items if int(it.get("id", -1)) in wanted]
+    j["data"]["components"] = kept
+    if "total" in j["data"]:
+        j["data"]["total"] = len(kept)
+    with open(manifest_path, "w") as f:
+        json.dump(j, f, indent=2)
+    bytes_kept = sum(int(it.get("file_size") or 0) for it in kept)
+    return (len(kept), before - len(kept), bytes_kept)
+
+
+def url_to_filename(url: str) -> str:
+    return url.rstrip("/").rsplit("/", 1)[-1]
+
+
+def fetch_bundled(dst: str, cdn_prefix: str, config_path: str, upstream_src: str) -> dict:
+    """Trim manifests + download every bundled binary into <dst>/<cdn_prefix>/.
+    Returns a summary dict."""
+    with open(config_path) as f:
+        cfg = json.load(f)
+
+    cdn_dir = os.path.join(dst, cdn_prefix)
+    os.makedirs(cdn_dir, exist_ok=True)
+
+    summary = {"trimmed": [], "downloaded_files": 0, "cached_files": 0,
+               "failed_files": 0, "total_bytes": 0}
+
+    # Trim each manifest to only declared IDs, then download the binaries
+    for manifest_name, spec in cfg.get("manifests", {}).items():
+        manifest_path = os.path.join(dst, "components", manifest_name)
+        if not os.path.exists(manifest_path):
+            print(f"  WARN: manifest not in dst: {manifest_name}")
+            continue
+        include = spec.get("include", [])
+        kept, dropped, bytes_kept = trim_manifest(manifest_path, include)
+        summary["trimmed"].append((manifest_name, kept, dropped, bytes_kept))
+        print(f"  trim   {manifest_name:25s} kept={kept:3d} dropped={dropped:3d}  {bytes_kept/1024/1024:7.1f} MB")
+
+        # Download each kept item's file
+        with open(manifest_path) as f:
+            kept_items = json.load(f)["data"]["components"]
+        for it in kept_items:
+            url = it.get("download_url", "")
+            md5 = it.get("file_md5", "") or ""
+            if not url or not url.startswith("http"):
+                continue
+            # URL has already been rewritten to local 127.0.0.1, so re-derive upstream URL
+            fn = url_to_filename(url)
+            up_url = f"{UPSTREAM_CDN_PREFIX}{fn}"
+            dest = os.path.join(cdn_dir, fn)
+            try:
+                status, sz = download_to(up_url, dest, md5)
+                if status == "downloaded":
+                    summary["downloaded_files"] += 1
+                elif status == "cached":
+                    summary["cached_files"] += 1
+                else:
+                    summary["failed_files"] += 1
+                    print(f"  FAIL  md5 mismatch for {fn}")
+                    continue
+                summary["total_bytes"] += sz
+            except Exception as e:
+                summary["failed_files"] += 1
+                print(f"  FAIL  {fn}: {e}")
+
+    # Containers: fetch wine archive + sub_data for each included id
+    container_ids = cfg.get("containers", {}).get("include", [])
+    for cid in container_ids:
+        detail_path = os.path.join(upstream_src, "simulator/v2/getContainerDetail", str(cid))
+        if not os.path.exists(detail_path):
+            print(f"  WARN: container detail missing: {cid}")
+            continue
+        with open(detail_path) as f:
+            d = json.load(f)["data"]
+        # Wine archive
+        for kind, url_key, md5_key in (
+            ("wine", "download_url", "file_md5"),
+        ):
+            url = d.get(url_key, "")
+            md5 = d.get(md5_key, "")
+            if not url:
+                continue
+            fn = url_to_filename(url)
+            up_url = f"{UPSTREAM_CDN_PREFIX}{fn}"
+            dest = os.path.join(cdn_dir, fn)
+            try:
+                status, sz = download_to(up_url, dest, md5)
+                summary["downloaded_files" if status == "downloaded" else "cached_files"] += 1
+                summary["total_bytes"] += sz
+                print(f"  cont   id={cid} {kind:8s} {fn}  {sz/1024/1024:7.1f} MB  [{status}]")
+            except Exception as e:
+                summary["failed_files"] += 1
+                print(f"  FAIL  container {cid} {kind}: {e}")
+        # sub_data
+        sd = d.get("sub_data") or {}
+        sd_url = sd.get("sub_download_url", "")
+        sd_md5 = sd.get("sub_file_md5", "")
+        if sd_url:
+            fn = url_to_filename(sd_url)
+            up_url = f"{UPSTREAM_CDN_PREFIX}{fn}"
+            dest = os.path.join(cdn_dir, fn)
+            try:
+                status, sz = download_to(up_url, dest, sd_md5)
+                summary["downloaded_files" if status == "downloaded" else "cached_files"] += 1
+                summary["total_bytes"] += sz
+                print(f"  cont   id={cid} sub_data {fn}  {sz/1024/1024:7.1f} MB  [{status}]")
+            except Exception as e:
+                summary["failed_files"] += 1
+                print(f"  FAIL  container {cid} sub_data: {e}")
+
+    # Imagefs
+    if cfg.get("imagefs", {}).get("include"):
+        imgdetail = os.path.join(upstream_src, "simulator/v2/getImagefsDetail")
+        if os.path.exists(imgdetail):
+            with open(imgdetail) as f:
+                d = json.load(f)["data"]
+            url = d.get("download_url", "")
+            md5 = d.get("file_md5", "")
+            if url:
+                fn = url_to_filename(url)
+                up_url = f"{UPSTREAM_CDN_PREFIX}{fn}"
+                dest = os.path.join(cdn_dir, fn)
+                try:
+                    status, sz = download_to(up_url, dest, md5)
+                    summary["downloaded_files" if status == "downloaded" else "cached_files"] += 1
+                    summary["total_bytes"] += sz
+                    print(f"  img    {fn}  {sz/1024/1024:7.1f} MB  [{status}]")
+                except Exception as e:
+                    summary["failed_files"] += 1
+                    print(f"  FAIL  imagefs: {e}")
+
+    return summary
 
 
 def rewrite_file(path: str, old_prefix: str, new_prefix: str) -> int:
@@ -156,8 +351,27 @@ def main() -> int:
             overrides_applied = copytree_overwrite(overrides, dst)
             print(f"  apply  overrides/  files={overrides_applied}  (from {overrides})")
 
+    bundled_summary = None
+    if args.bundled_components:
+        cfg_path = os.path.abspath(args.bundled_components)
+        if not os.path.exists(cfg_path):
+            print(f"ERROR: --bundled-components file not found: {cfg_path}", file=sys.stderr)
+            return 1
+        print(f"\nBundled-components pass (trim manifests + fetch binaries):")
+        bundled_summary = fetch_bundled(dst, args.cdn_prefix, cfg_path, src)
+        s = bundled_summary
+        print(f"  bundled: downloaded={s['downloaded_files']} cached={s['cached_files']} "
+              f"failed={s['failed_files']} total={s['total_bytes']/1024/1024:.1f} MB")
+        if s["failed_files"]:
+            print(f"ERROR: {s['failed_files']} bundled file(s) failed to fetch", file=sys.stderr)
+            return 1
+
     print()
     print(f"DONE. upstream_files={total_files} rewrites={total_rewrites} overrides={overrides_applied}")
+    if bundled_summary:
+        s = bundled_summary
+        print(f"      bundled={s['downloaded_files']+s['cached_files']} files, "
+              f"{s['total_bytes']/1024/1024:.1f} MB shipped in APK")
     return 0
 
 
