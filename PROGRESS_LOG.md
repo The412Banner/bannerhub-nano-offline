@@ -650,3 +650,147 @@ Remaining deferrable items (not blocking ship):
 - First public release tag (`v3.7.5-offline-nano-1`?) — user call
 
 ---
+
+## 2026-05-23 — Phase 2 KICKOFF: bundle CDN components for true offline install
+
+User pivot: "we are halfway done with this project." Phase 1 (catalog API) verified. Phase 2 = ship the binary archives so in-app component install works fully offline.
+
+Inventory of full V5 catalog: 548 manifest items (3.41 GB) + 10 containers (1.76 GB) + imagefs (164 MB) = ~5.3 GB total. Way too big for a single APK. Decisions:
+
+- **Single-APK only** (original goal preserved)
+- **Curated bundle, in-app menus reflect only what's bundled**
+- **Per-type ID list** in `data/bundled-components.json`
+- **Binaries fetched at CI build time** from bannerhub-api GH Releases (repo stays tiny)
+
+### Final bundle (post-user-refinement)
+
+User refinements applied:
+- DROPPED Steam clients (offline users don't sign in)
+- DROPPED proton11.0-arm64x + sub_data (no arm64x container)
+- KEPT proton10.0-x64-1 + sub_data (sole container)
+- KEPT all arm64ec DXVK/VKD3D variants for future arm64x .wcp imports (user preference)
+- KEPT all older DXVK fallbacks (game-compat insurance)
+- ALL 54 game-specific `*_Settings` items bundled (cheap, ~5 MB) + base.tzst
+
+Plus install-script-mandated additions (each <12 MB): Fex-20251025 (id=345), dxvk-2.3.1-async (id=25), turnip_v25.0.0_R1 (id=48), vkd3d-2.12 (id=7).
+
+### Total bundle: 186 files, ~560 MB (APK ~150 MB → ~720 MB)
+
+| Category | Files | MB |
+|---|---|---|
+| box64/Fex | 5 | 24 |
+| DXVK | 8 | 64 |
+| VKD3D | 5 | 16 |
+| Drivers | 6 | 47 |
+| Steam | 0 | 0 |
+| Libraries | 117 | 1 |
+| Container (wine + sub_data) | 2 | 161 |
+| imagefs | 1 | 164 |
+| Game settings (incl. base) | 42 | 85 |
+
+3 IDs excluded after smoke test detected stale catalog entries (binaries 404 on GH Releases): id=236 Torchlight II, id=291 WRC 9, id=310 Resident Evil 3.
+
+### Catalog overrides (committed under data/local-mirror-overrides/simulator/)
+
+- `executeScript/{generic,generic_steam,qualcomm,qualcomm_steam}` — container block swapped from arm64x (id=2) to x64 (id=10), so first-run install scripts target the bundled container
+- `v2/getDefaultComponent` — steamClient stubbed to empty record (mirroring existing empty `translator` shape) so the app doesn't request a Steam client we never bundled
+- `v2/getContainerList` — trimmed to only id=10
+
+### Build pipeline changes
+
+- `data/bundled-components.json` is the single source of truth for what ships
+- `scripts/prepare_local_mirror.py --bundled-components <json>` extension:
+  - Trims `components/*_manifest` to only declared IDs
+  - Downloads each kept item's binary from `https://github.com/.../bannerhub-api/releases/download/Components/<file>` to `<dst>/components-cdn/<file>` with md5 verification
+  - Caches successful downloads (skip re-fetch on subsequent runs)
+  - Pulls container wine + sub_data + imagefs from getContainerDetail/getImagefsDetail
+- `LocalCdnServer.java` — **no changes**. The asset fallback we added during the logo fix already serves files from `assets/local-mirror/components-cdn/`; the new pipeline just populates more files there.
+- Both CI workflows: `actions/cache@v4` keyed on `hashFiles('data/bundled-components.json')` so the 560 MB CDN payload is reused across runs unless the bundle list changes. First build cold-cache ~10-12 min; cached builds ~5 min.
+
+### Local smoke test (PRoot, 2026-05-23)
+
+```
+$ python3 scripts/prepare_local_mirror.py --src ~/bannerhub-api ... \
+    --overrides-dir data/local-mirror-overrides \
+    --bundled-components data/bundled-components.json
+  trim   box64_manifest            kept=  5 dropped= 31     23.0 MB
+  trim   dxvk_manifest             kept=  8 dropped= 39     64.0 MB
+  trim   vkd3d_manifest            kept=  5 dropped=  2     15.8 MB
+  trim   drivers_manifest          kept=  6 dropped=267     47.0 MB
+  trim   steam_manifest            kept=  0 dropped=  3      0.0 MB
+  trim   libraries_manifest        kept=117 dropped=  0      0.7 MB
+  trim   games_manifest            kept= 42 dropped= 23     84.1 MB
+  cont   id=10 wine     wine_proton_10.0_x64.tar.zst    157.2 MB
+  cont   id=10 sub_data 751b2ec...tzst                    3.9 MB
+  img    imagefs_141.zst                                164.2 MB
+  bundled: downloaded=186 cached=0 failed=0 total=560.1 MB
+```
+
+All 186 files md5-verified, all overrides applied (executeScript points x64, steamClient stubbed, getContainerList trimmed to 1).
+
+### Build #7 in flight — run `26337389674`
+
+Pushed `f97f7f5 feat: bundle CDN components for true offline install (~560 MB)` to origin/main. Triggered "Build APK (Quick — Normal only)" workflow. First cold-cache build expected ~10-12 min (~560 MB to download + APK pack).
+
+Pass criteria for Build #7:
+- A. CI workflow green
+- B. APK size ~720 MB (was ~150 MB)
+- C. `unzip -l <apk> assets/local-mirror/components-cdn/` shows ~186 entries totaling ~560 MB
+- D. `unzip -p assets/local-mirror/components/box64_manifest` shows kept=5 items only (trim worked)
+- E. (Device test) install over Build #6, cold launch — menu lists the curated set; tapping "install" on any component completes offline
+
+---
+
+## 2026-05-23 — Build #7 GREEN ✓ — Phase 2 plumbing verified on-device
+
+Run `26337389674` succeeded in **5m39s** (first cold-cache build, faster than feared). APK at
+`~/bannerhub-nano-offline-builds/BannerHub-pre-main-v7/BannerHub-pre-main/BannerHub-Nano-Offline-main-Normal.apk` (701.2 MB, +550 MB vs Build #6).
+
+### Pre-install APK sanity (unzip)
+
+| Check | Expected | Got |
+|---|---|---|
+| `components-cdn/` file count | 186 | 186 |
+| `components-cdn/` packed size | ~560-590 MB | 588 MB |
+| `box64_manifest` items | 5 | 5 |
+| `dxvk_manifest` items | 8 | 8 |
+| `vkd3d_manifest` items | 5 | 5 |
+| `drivers_manifest` items | 6 | 6 |
+| `steam_manifest` items | 0 | 0 |
+| `libraries_manifest` items | 117 | 117 |
+| `games_manifest` items | 42 | 42 |
+| executeScript container | id=10 X64 | wine_proton_10.0_x64.tar.zst |
+| steamClient | empty stub | id=0, name='' |
+
+### Device-side launch + curl smoke (online — full airplane test still ahead)
+
+Installed via `pm install -r -d ...` (Success). Force-stopped, monkey-launched, PID 12507, port 51823 LISTEN.
+
+Curl probes from PRoot to `127.0.0.1:51823/components-cdn/` (all real filenames pulled from the trimmed manifests):
+
+```
+fex-20251025.tzst                                  HTTP 200  11580115 b
+d2bc791642757a507eb395ac548e2aa8.tzst              HTTP 200   1696433 b  (FEXCore-2605)
+dxvk-2.6-arm64ec-gplasync.tzst                     HTTP 200   9094354 b
+8E-805.0.tzst                                      HTTP 200  12305296 b  (Adreno_805.0)
+turnip_v25.0.0_R1.tzst                             HTTP 200   2221425 b
+e24dbfd879ff0f2c972612ec45af3a7a.tzst              HTTP 200   8359172 b  (DXVK-2.7.1-1-gplasync)
+```
+
+All 6 real-name component files stream correctly via LocalCdnServer's asset fallback (the mechanism we added during the Build #6 logo fix). Hash-named files (md5-keyed) work the same as name-keyed files because the URL path is what matters — LocalCdnServer doesn't inspect the name.
+
+`/components/box64_manifest` returns exactly the 5 picked IDs (345, 1314, 1315, 1331, 1337) — trim is correct end-to-end through the live HTTP server. In-app menu will show those 5 entries and nothing else.
+
+### Pass criteria status
+
+| Criterion | Status |
+|---|---|
+| A. CI workflow green | ✅ |
+| B. APK ~720 MB | ✅ 701 MB (close enough; zip compression saves a bit) |
+| C. components-cdn ~186 entries / ~560 MB | ✅ 186 entries / 588 MB |
+| D. Manifests trimmed | ✅ All 7 manifests at exact counts |
+| E. In-app install actually completes offline (device test) | **PENDING** user runs airplane test |
+
+Open: needs your airplane-mode test where you actually tap "install" on a component in the in-app menu (e.g. switch DXVK or driver) to confirm the unpack/install flow completes offline using the bundled .tzst.
+
+---
