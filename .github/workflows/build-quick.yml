@@ -921,6 +921,49 @@ jobs:
           sed -i "s/gamehub\.lite/banner.nano.offline/g" apktool_out/AndroidManifest.xml
           sed -i 's/android:label="GameHub Revanced"/android:label="BannerHub Nano Offline"/' apktool_out/AndroidManifest.xml
 
+      - name: Add zst/tzst/yml to apktool doNotCompress
+        run: |
+          # Local CDN assets (.zst/.tzst already-compressed archives, .yml
+          # catalogs) must be STORED uncompressed in the APK so the NanoHttpd
+          # server can AssetManager.openFd() them and stream with a real
+          # Content-Length. Without this, AAPT2 DEFLATE's them and openFd()
+          # throws FileNotFoundException ("probably compressed").
+          python3 - <<'PYEOF'
+          path = 'apktool_out/apktool.yml'
+          with open(path) as f:
+              lines = f.readlines()
+          out = []
+          inserted = False
+          existing_after_header = set()
+          # Walk to detect existing entries under doNotCompress and skip duplicates.
+          in_block = False
+          for line in lines:
+              if line.rstrip() == 'doNotCompress:':
+                  in_block = True
+              elif in_block:
+                  s = line.rstrip()
+                  if s.startswith('- '):
+                      existing_after_header.add(s[2:].strip())
+                  else:
+                      in_block = False
+          to_add = [e for e in ('zst', 'tzst', 'yml') if e not in existing_after_header]
+          for line in lines:
+              out.append(line)
+              if not inserted and line.rstrip() == 'doNotCompress:':
+                  for ext in to_add:
+                      out.append(f'- {ext}\n')
+                  inserted = True
+          if not inserted:
+              # No existing doNotCompress block; append one at end-of-file.
+              out.append('doNotCompress:\n')
+              for ext in to_add:
+                  out.append(f'- {ext}\n')
+          with open(path, 'w') as f:
+              f.writelines(out)
+          print(f"Added to doNotCompress: {to_add}")
+          PYEOF
+          grep -A 30 '^doNotCompress:' apktool_out/apktool.yml | head -40
+
       - name: Rebuild and Sign (Normal variant only)
         run: |
           echo "Building Normal variant (com.tencent.ig — pre/beta isolated package)..."

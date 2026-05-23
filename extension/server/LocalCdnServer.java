@@ -1,6 +1,7 @@
 package app.revanced.extension.gamehub.server;
 
 import android.content.Context;
+import android.content.res.AssetFileDescriptor;
 import android.content.res.AssetManager;
 import android.os.Environment;
 import android.util.Log;
@@ -67,13 +68,18 @@ final class LocalCdnServer {
         return newFixedLengthResponse(Status.NOT_FOUND, "text/plain", "");
     }
 
-    /** Asset fallback for catalog-referenced static images (logos, backgrounds)
-     *  that aren't part of the user-managed .wcp component set. */
+    /** Asset fallback for bundled CDN payload (and small catalog-referenced
+     *  static images). openFd + fixed-length response is required so the
+     *  HTTP client gets a real Content-Length — chunked transfer encoding
+     *  without a declared size causes Aria's downloader to bail with 0 bytes
+     *  written. Needs the matching asset extensions in apktool.yml's
+     *  doNotCompress (zst, tzst, yml) so openFd can return a real fd. */
     private Response serveFromAssets(String filename) {
         AssetManager am = ctx.getAssets();
         try {
-            InputStream in = am.open(ASSET_FALLBACK_DIR + "/" + filename);
-            return newChunkedResponse(Status.OK, guessMime(filename), in);
+            AssetFileDescriptor afd = am.openFd(ASSET_FALLBACK_DIR + "/" + filename);
+            return newFixedLengthResponse(Status.OK, guessMime(filename),
+                    afd.createInputStream(), afd.getDeclaredLength());
         } catch (IOException e) {
             return null;
         }
