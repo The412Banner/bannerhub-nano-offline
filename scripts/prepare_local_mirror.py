@@ -154,6 +154,33 @@ def trim_manifest(manifest_path: str, include_ids) -> tuple:
     return (len(kept), before - len(kept), bytes_kept)
 
 
+def trim_aggregated_catalog(catalog_path: str, keep_ids: set) -> tuple:
+    """Trim a getComponentList-style aggregated catalog file. The format is a
+    standard {code, msg, data: {list, total, ...}} envelope where data.list is
+    a STRINGIFIED JSON array of component objects (each with an `id` field).
+
+    The picker pulls from this aggregated view, so if we leave the upstream
+    548-entry list intact the user sees a flood of unfetchable entries even
+    though the per-category _manifest files have been trimmed.
+
+    Returns (kept_count, dropped_count)."""
+    with open(catalog_path) as f:
+        envelope = json.load(f)
+    data = envelope.get("data") or {}
+    raw_list = data.get("list", "[]")
+    items = json.loads(raw_list) if isinstance(raw_list, str) else (raw_list or [])
+    before = len(items)
+    kept = [it for it in items if int(it.get("id", -1)) in keep_ids]
+    # Re-stringify with compact separators to match upstream wire format.
+    data["list"] = json.dumps(kept, ensure_ascii=False, separators=(",", ":"))
+    if "total" in data:
+        data["total"] = len(kept)
+    envelope["data"] = data
+    with open(catalog_path, "w") as f:
+        json.dump(envelope, f, indent=2, ensure_ascii=False)
+    return (len(kept), before - len(kept))
+
+
 def url_to_filename(url: str) -> str:
     return url.rstrip("/").rsplit("/", 1)[-1]
 
@@ -252,6 +279,28 @@ def fetch_bundled(dst: str, cdn_prefix: str, config_path: str, upstream_src: str
             except Exception as e:
                 summary["failed_files"] += 1
                 print(f"  FAIL  container {cid} sub_data: {e}")
+
+    # Trim aggregated catalog endpoints (getComponentList, getAllComponentList)
+    # to the union of bundled component IDs. Without this the picker in-app
+    # would still see the upstream 548-entry list because the aggregated
+    # endpoints aren't covered by the per-_manifest trim above.
+    bundled_ids = set()
+    for manifest_name, spec in cfg.get("manifests", {}).items():
+        manifest_path = os.path.join(dst, "components", manifest_name)
+        if not os.path.exists(manifest_path):
+            continue
+        with open(manifest_path) as f:
+            for it in json.load(f).get("data", {}).get("components", []) or []:
+                cid = it.get("id")
+                if cid is not None:
+                    bundled_ids.add(int(cid))
+    if bundled_ids:
+        for catalog_name in ("getComponentList", "getAllComponentList"):
+            catalog_path = os.path.join(dst, "simulator", "v2", catalog_name)
+            if not os.path.exists(catalog_path):
+                continue
+            kept, dropped = trim_aggregated_catalog(catalog_path, bundled_ids)
+            print(f"  catalog {catalog_name:25s} kept={kept:3d} dropped={dropped:3d}")
 
     # Imagefs
     if cfg.get("imagefs", {}).get("include"):
