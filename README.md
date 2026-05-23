@@ -18,6 +18,8 @@
 
 Install the APK, add your `.wcp` components via the in-app Component Manager, add a game, launch. No internet required.
 
+> **v0.1 ships with Proton 10.0 x64 only** as the bundled compatibility layer. If you need Proton 11, Wine native, or another container, add it via the in-app Component Manager after install. Future releases will expand the bundled set.
+
 ## What works offline
 
 - ✅ All component manifests (Box64/FEX, DXVK, VKD3D, GPU drivers, libraries, Steam, games)
