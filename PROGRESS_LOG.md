@@ -141,3 +141,36 @@ Root cause: inside `BannerHubLocalServer extends NanoHTTPD`, the bare name `Meth
 Dropped the `import java.lang.reflect.Method` and wrote the type out as `java.lang.reflect.Method` in the one usage site. Added a comment explaining the shadow gotcha for the next reader. Triggered build #3 (run `26333819184`).
 
 ---
+
+## 2026-05-23 — Build #3 GREEN ✓ — first APK artifact
+
+Run `26333819184` completed in 3m58s. APK artifact `BannerHub-pre-main` uploaded.
+
+### Verified contents of `BannerHub-Nano-Offline-main-Normal.apk` (141 MB)
+
+```
+package: name='banner.nano.offline' versionCode='78' versionName='main'
+sdkVersion='29'  targetSdkVersion='35'
+```
+
+- **52 asset files** under `assets/local-mirror/` — full mirror of bannerhub-api static catalog (components/, simulator/, base/, card/, cloud/, devices/, email/, ems/, game/, heartbeat/, upgrade/, user/, vtouch/)
+- **`res/xml/network_security_config.xml`** bundled (cleartext to 127.0.0.1 only)
+- **`classes18.dex`** (696 KB) — extension dex with BannerHubLocalServer, LocalAssetServer, LocalCdnServer + existing BannerHub Java (Epic/GOG/Amazon/framegen/vibration/settings exporter) + nanohttpd 2.3.1
+- **17 classes*.dex** total (smali_classes2-17 reassembled + classes12.dex restored from base + classes18 extension)
+- Package renamed to `banner.nano.offline` (coexists with BannerHub installs)
+- Label "BannerHub Nano Offline"
+
+### Local artifact
+
+`~/bannerhub-nano-offline-builds/BannerHub-pre-main/BannerHub-Nano-Offline-main-Normal.apk`
+
+### Next
+
+Device test — airplane mode ON, sideload, verify:
+1. App starts without network
+2. NanoHttpd binds `127.0.0.1:8765` (logcat: `BH-NanoServer: Local API server started on http://127.0.0.1:8765/`)
+3. Component picker UI shows catalog from in-APK mirror
+4. User can import a `.wcp` via the existing Component Manager
+5. Game launch works offline (falls through to v3.7.5 offline-launch path)
+
+---
