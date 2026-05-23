@@ -5,6 +5,7 @@ import android.content.Context;
 import android.util.Log;
 
 import java.io.IOException;
+import java.util.HashMap;
 
 import fi.iki.elonen.NanoHTTPD;
 
@@ -95,6 +96,21 @@ public final class BannerHubLocalServer extends NanoHTTPD {
     @Override
     public Response serve(IHTTPSession session) {
         String path = session.getUri();
+        // Drain request body for non-GET/HEAD methods. NanoHTTPD requires
+        // parseBody() to be called on POST/PUT/DELETE etc., otherwise the
+        // socket stalls and the client times out — even though every endpoint
+        // we mirror serves static content keyed only on the URL path. Drake.Net
+        // posts most BannerHub calls (EnvLayerRepository.fetchEnvTabs, etc.),
+        // so without this drain the env-setting screen hangs indefinitely and
+        // game launch never gets the data it needs.
+        Method m = session.getMethod();
+        if (m != null && m != Method.GET && m != Method.HEAD) {
+            try {
+                session.parseBody(new HashMap<String, String>());
+            } catch (Throwable ignored) {
+                // best-effort drain; we discard the body content
+            }
+        }
         try {
             if (path.startsWith("/components-cdn/")) {
                 return cdnServer.serve(path.substring("/components-cdn/".length()));
