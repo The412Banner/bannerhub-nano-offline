@@ -793,4 +793,28 @@ All 6 real-name component files stream correctly via LocalCdnServer's asset fall
 
 Open: needs your airplane-mode test where you actually tap "install" on a component in the in-app menu (e.g. switch DXVK or driver) to confirm the unpack/install flow completes offline using the bundled .tzst.
 
+### Install + on-device state (current as of this snapshot)
+
+- Build #7 APK already installed on the device, **upgrade-in-place** over Build #6 via `getlog --exec "pm install -r -d <path>"` → `Success`. No reinstall needed before the airplane test.
+- APK file at PRoot path: `~/bannerhub-nano-offline-builds/BannerHub-pre-main-v7/BannerHub-pre-main/BannerHub-Nano-Offline-main-Normal.apk` (701 MB). Not copied to `/sdcard/Download/` — only the prior test scripts/logs live there.
+- `versionCode=78`, `versionName=main` (same as Build #6 — distinguished by file size + install timestamp on device).
+
+### Airplane install-flow test plan (next step)
+
+1. Flip airplane mode ON (claude session will lose Anthropic net; logcat-bridge stays local).
+2. Open BannerHub Nano Offline.
+3. Navigate to component picker — settings → Environment / Renderer / GPU driver (or similar surface that lists installable items).
+4. Tap **install** on a component that **isn't** what the device currently has selected — e.g. swap DXVK from default to a different bundled version, or try a different turnip driver.
+5. Watch the in-app progress bar.
+
+Pass: install completes without an error toast. The on-device install dir (`/data/data/banner.nano.offline/files/` or `/sdcard/BannerHub/components/`) now contains the unpacked component.
+
+Fail patterns to watch for:
+- "Network error" / "Download failed" → server didn't return bytes (curl probes already disproved this, but worth catching)
+- "Hash mismatch" → md5 of bundled file differs from what the catalog says (would mean a stale catalog entry; our smoke test verified md5s but the app might re-verify differently)
+- Hang at 0% → server returned 200 but body stalled (e.g. NanoHTTPD chunked encoding edge case)
+- App crash → DTO mismatch on the install-response shape (analogous to check_user_timer; would need decompile to fix)
+
+Optionally capture a focused logcat during the install via `getlog -f banner.nano.offline | tee /sdcard/Download/install-flow-test.log` so we can debug if anything goes wrong.
+
 ---
