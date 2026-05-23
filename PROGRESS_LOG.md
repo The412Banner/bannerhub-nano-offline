@@ -1069,3 +1069,57 @@ Rejected alternative: force `NetworkUtils.r() → true` globally via smali. That
 
 Expected post-Build-#11 launch flow: tap Launch → `GameConfigDownloadTask` runs normally → POST `/simulator/executeScript` → Build #10 dispatcher routes to right variant (generic/qualcomm × _steam?) → response carries `imagefs`, `container`, `component_ids` → `Install ImageFs` reads the per-game imagefs → downloads from `127.0.0.1:51823/components-cdn/imagefs_141.zst` (already bundled) → mount → game.
 
+
+## 2026-05-23 — Build #11 airplane test = task download game config failed → Build #12
+
+### Build #11 device test
+
+Removing the v3.7.5 "Apply Offline Launch smali patch" step *did* unblock the launch chain (`GameConfigDownloadTask` is no longer a 1 ms NOP — runs for ~63 ms doing real work), but exposed the next gate.
+
+Logcat at `/sdcard/Download/nano-build11-airplane.log` shows:
+
+```
+PcEmuSetup: ▶ 开始任务: Download Game Config
+PcEmuSetup:   → 开始下载游戏配置文件，gameId=local_0e57a619-...
+GHL/Token: resolveToken → fake-token (EmuReady path)
+SignUtils: clientparams=5.3.5|14|en|Pocket FIT|...gpu_vendor=Qualcomm&...&token=fake-token...
+PcEmuSetup: ✗ 失败任务: Download Game Config - Network connection failed, please check the network (耗时: 63ms)
+```
+
+No `executeScript` hit in `BH-NanoServer` log lines. The task did token resolution + signature computation, then bailed before any OkHttp dispatch.
+
+### Root cause
+
+The user-facing string `"Network connection failed, please check the network"` is `R.string.comm_network_disconnect_and_check` in `patches/res/values/strings.xml:434`. Decompiling v11 traced the gate to **`com.blankj.utilcode.util.NetworkUtils.r()`** (at `smali_classes11/com/blankj/utilcode/util/NetworkUtils.smali`):
+
+```smali
+.method public static r()Z
+    .locals 1
+    invoke-static {}, NetworkUtils;->h()NetworkInfo;   # ConnectivityManager probe
+    ...isConnected()...
+    return v0   # false in airplane mode
+.end method
+```
+
+Eight callers across the app route through this, including `WinEmuDownloadManager.a0(Z)Z` (= `isNetConnected`) which surfaces the "请检查网络" toast and propagates failure up through `WinEmuFileExplorer$checkGameConfigIsDownloaded$1` back to `GameConfigDownloadTask`.
+
+We already neutralized the OkHttp-layer counterpart `OfflineCacheInterceptor.a()` (commit `7babca1`). `NetworkUtils.r()` is the same kind of gate at a different layer — it probes the OS-level `ConnectivityManager`, which has no knowledge of our `127.0.0.1` server.
+
+### Build #12 fix
+
+New workflow step **"Force NetworkUtils.r() always-true (global 'lie about offline')"** added to both `build.yml` (line 733) and `build-quick.yml` (line 798), immediately after the existing OfflineCacheInterceptor neutralize step. Body becomes:
+
+```smali
+.method public static r()Z
+    .locals 1
+    const/4 v0, 0x1
+    return v0
+.end method
+```
+
+Single point of truth for "is the network up?" → always yes. All 8 callers (download manager, file explorer, env layer, download UI, cloud game x2, CommonAppKt init, Steam strategy) then proceed as online.
+
+### Trade-off
+
+`SteamGameByPcEmuLaunchStrategy$execute$3` (lines 693, 770) has a "if no network, skip Steam login" bypass that's now defeated — Steam library games will attempt to reach Steam CMs and fail. Accepted: `bundled-components.json` already declares `steam_manifest: { include: [] }` ("offline users never sign into Steam"). nano-offline scope is PC-game-import launches; Steam library is explicitly out-of-scope.
+

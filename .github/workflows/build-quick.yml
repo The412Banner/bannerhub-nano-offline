@@ -795,6 +795,50 @@ jobs:
           print("OfflineCacheInterceptor.a(): patched to always return true (network-available).")
           PYEOF
 
+      - name: Force NetworkUtils.r() always-true (global "lie about offline")
+        run: |
+          python3 << 'PYEOF'
+          import re, sys
+          # com.blankj.utilcode.util.NetworkUtils is the connectivity utility the
+          # rest of the app routes through. Its r() returns
+          # ConnectivityManager → NetworkInfo.isConnected(). In airplane mode it
+          # returns false and at least 8 call sites (WinEmuDownloadManager.a0,
+          # WinEmuFileExplorer$checkGameConfigIsDownloaded$1, EnvLayerDetailActivity,
+          # NewNewDownloadTaskUIMgrImpl, CloudGame x2, CommonAppKt, Steam strategy)
+          # use it to gate behavior. The launch-task chain in particular surfaces
+          # "Network connection failed" via R.string.comm_network_disconnect_and_check
+          # and refuses to issue the executeScript POST. Since every URL is 127.0.0.1,
+          # which is up regardless of the radio, this whole gating is wrong for
+          # nano-offline. Force r() → true globally; OfflineCacheInterceptor.a()
+          # already does the same at the OkHttp layer (step above).
+          # Trade-off: SteamGameByPcEmuLaunchStrategy's "if no network, skip Steam
+          # login" bypass also flips — Steam library games will then try to reach
+          # Steam CMs and fail. Acceptable: bundled-components.json declares
+          # steam_manifest empty (offline users never sign into Steam in this build).
+          path = 'apktool_out/smali_classes11/com/blankj/utilcode/util/NetworkUtils.smali'
+          content = open(path, encoding='utf-8').read()
+          pattern = re.compile(
+              r'\.method public static r\(\)Z\n.*?\.end method\n',
+              re.DOTALL,
+          )
+          replacement = (
+              '.method public static r()Z\n'
+              '    .locals 1\n'
+              '    # BannerHub Nano Offline: force "network available" globally so\n'
+              '    # every launch-task / download / dialog gate that consults\n'
+              '    # NetworkUtils.r() proceeds to the local 127.0.0.1 server.\n'
+              '    const/4 v0, 0x1\n'
+              '    return v0\n'
+              '.end method\n'
+          )
+          new_content, n = pattern.subn(replacement, content, count=1)
+          if n != 1:
+              print("ERROR: r()Z method anchor not found in NetworkUtils.smali")
+              sys.exit(1)
+          open(path, 'w', encoding='utf-8').write(new_content)
+          print("NetworkUtils.r(): patched to always return true (network-available).")
+          PYEOF
+
       - name: Cache bundled CDN binaries
         uses: actions/cache@v4
         with:
