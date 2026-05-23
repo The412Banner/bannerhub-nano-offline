@@ -5,7 +5,6 @@ import android.content.Context;
 import android.util.Log;
 
 import java.io.IOException;
-import java.lang.reflect.Method;
 
 import fi.iki.elonen.NanoHTTPD;
 
@@ -52,11 +51,16 @@ public final class BannerHubLocalServer extends NanoHTTPD {
         }
     }
 
-    /** ActivityThread.currentApplication() — works without an explicit Context parameter. */
+    /**
+     * ActivityThread.currentApplication() — works without an explicit Context parameter.
+     * Method type is fully qualified because NanoHTTPD has an inner enum
+     * `NanoHTTPD.Method` (HTTP verbs) that shadows java.lang.reflect.Method
+     * inside this subclass.
+     */
     private static Context resolveAppContext() {
         try {
             Class<?> at = Class.forName("android.app.ActivityThread");
-            Method m = at.getMethod("currentApplication");
+            java.lang.reflect.Method m = at.getMethod("currentApplication");
             Object app = m.invoke(null);
             if (app instanceof Application) {
                 return ((Application) app).getApplicationContext();
