@@ -839,6 +839,43 @@ jobs:
           print("NetworkUtils.r(): patched to always return true (network-available).")
           PYEOF
 
+      - name: Force Aria NetUtils.isConnected always-true (download library gate)
+        run: |
+          python3 << 'PYEOF'
+          import re, sys
+          # com.arialyy.aria is a separate third-party download library with its
+          # OWN connectivity check. Its NetUtils.isConnected(Context) is called
+          # from 6 Aria-internal sites (StartCmd, HighestPriorityCmd, ResumeAllCmd,
+          # ThreadTask, TaskSchedulers, SimpleSchedulers). In airplane mode it
+          # returns false and Aria's StartCmd.executeCmd() prints
+          # "启动任务失败，网络未连接" 8 times in 33ms and never dispatches the
+          # download — the launch task's coroutine then hangs ~111s until the
+          # outer SetupTaskManager cancels it. Force this to always return true;
+          # every URL Aria sees is 127.0.0.1 anyway.
+          path = 'apktool_out/smali_classes6/com/arialyy/aria/util/NetUtils.smali'
+          content = open(path, encoding='utf-8').read()
+          pattern = re.compile(
+              r'\.method public static isConnected\(Landroid/content/Context;\)Z\n.*?\.end method\n',
+              re.DOTALL,
+          )
+          replacement = (
+              '.method public static isConnected(Landroid/content/Context;)Z\n'
+              '    .locals 1\n'
+              '    # BannerHub Nano Offline: force "network connected" for Aria.\n'
+              '    # Aria downloads only ever go to 127.0.0.1, so the OS-level\n'
+              '    # ConnectivityManager probe Aria uses is wrong here.\n'
+              '    const/4 v0, 0x1\n'
+              '    return v0\n'
+              '.end method\n'
+          )
+          new_content, n = pattern.subn(replacement, content, count=1)
+          if n != 1:
+              print("ERROR: isConnected(Context)Z method anchor not found in Aria NetUtils.smali")
+              sys.exit(1)
+          open(path, 'w', encoding='utf-8').write(new_content)
+          print("Aria NetUtils.isConnected(): patched to always return true.")
+          PYEOF
+
       - name: Cache bundled CDN binaries
         uses: actions/cache@v4
         with:

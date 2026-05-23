@@ -1123,3 +1123,40 @@ Single point of truth for "is the network up?" → always yes. All 8 callers (do
 
 `SteamGameByPcEmuLaunchStrategy$execute$3` (lines 693, 770) has a "if no network, skip Steam login" bypass that's now defeated — Steam library games will attempt to reach Steam CMs and fail. Accepted: `bundled-components.json` already declares `steam_manifest: { include: [] }` ("offline users never sign into Steam"). nano-offline scope is PC-game-import launches; Steam library is explicitly out-of-scope.
 
+
+## 2026-05-23 — Build #12 airplane test = stuck on "checking environment" → Build #13 (Aria gate)
+
+### Build #12 device test
+
+User reported "gets stuck on checking environment" — substantial progress vs v11's 63ms fast-fail. Logcat at `/sdcard/Download/nano-build12-airplane.log` shows Download Game Config running ~111 seconds before SetupTaskManager cancels it:
+
+```
+PcEmuSetup: ▶ 开始任务: Download Game Config
+PcEmuSetup:   → 开始下载游戏配置文件，gameId=local_96a4e10d-086e-47f5-9d27-abd5e9a53103
+GHL/Token: resolveToken → fake-token (EmuReady path)
+SignUtils: clientparams=5.3.5|14|en|Pocket FIT|...
+StartCmd: 启动任务失败，网络未连接   (× 8 across parallel threads, 33 ms span)
+[110+ seconds of nothing]
+PcEmuSetup: ✗ 失败任务: Download Game Config - Job was cancelled (耗时: 111016ms)
+```
+
+No `executeScript` hit in `BH-NanoServer` log lines — the call never dispatched. NetworkUtils.r() patch (Build #12) is working at the app-utility layer, but Aria's StartCmd is gating download dispatch separately.
+
+### Root cause: Aria download library has its own NetUtils
+
+apktool decompile pinned `StartCmd: 启动任务失败，网络未连接` to `com.arialyy.aria.core.command.StartCmd.executeCmd()` which calls `Lcom/arialyy/aria/util/NetUtils;->isConnected(Landroid/content/Context;)Z`. This is a **third connectivity gate**, separate from the two already patched:
+
+| Layer | Method | Patched |
+|---|---|---|
+| OkHttp cache interceptor | `OfflineCacheInterceptor.a()Z` | commit `7babca1` ✅ |
+| App utility (blankj) | `NetworkUtils.r()Z` | commit `89f91b5` ✅ |
+| **Aria download library** | `NetUtils.isConnected(Context)Z` | **Build #13** |
+
+Aria's `isConnected()` is consulted from 6 in-library sites (StartCmd, HighestPriorityCmd, ResumeAllCmd, ThreadTask, TaskSchedulers, SimpleSchedulers). Single patch on the utility covers all.
+
+### Build #13 fix
+
+New workflow step "Force Aria NetUtils.isConnected always-true (download library gate)" added to both build.yml and build-quick.yml right after the existing NetworkUtils.r() patch. Same const-true pattern. Path: `smali_classes6/com/arialyy/aria/util/NetUtils.smali`.
+
+Expected post-Build-#13 flow: Download Game Config → token → signature → Aria StartCmd dispatches the OkHttp POST to /simulator/executeScript on 127.0.0.1 → response populates GameEnvConfigEntity → Phase 2 install tasks consume it → game launches.
+
