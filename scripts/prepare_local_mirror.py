@@ -24,9 +24,11 @@ The URL rewrite is a plain string replacement:
         -> <base-url>/<cdn-prefix>/
 
 Overrides (--overrides-dir): after upstream is copied + rewritten, every file
-under <overrides-dir> is copied on top of <dst> verbatim (no URL rewrite,
-preserves binary content). Use this for response-shape fixes and bundled CDN
-assets that upstream doesn't ship in the static repo.
+under <overrides-dir> is copied on top of <dst>, then the same github.com →
+local-CDN URL rewrite is applied to each override file. Binary files (logo PNG,
+etc.) are skipped automatically because rewrite_file() bails on UnicodeDecodeError.
+This keeps override JSONs canonically holding upstream github.com URLs in the
+repo, while shipping local URLs in the APK.
 
 Bundled components (--bundled-components): JSON config listing which component
 IDs (per manifest) and container/imagefs files to ship inside the APK. Manifests
@@ -343,13 +345,26 @@ def main() -> int:
         print(f"  copy   {subtree}/  files={copied}  rewrites={rewrites_here}")
 
     overrides_applied = 0
+    overrides_rewrites = 0
     if args.overrides_dir:
         overrides = os.path.abspath(args.overrides_dir)
         if not os.path.isdir(overrides):
             print(f"  skip   overrides ({overrides} does not exist)")
         else:
             overrides_applied = copytree_overwrite(overrides, dst)
-            print(f"  apply  overrides/  files={overrides_applied}  (from {overrides})")
+            # Apply the same github.com → local-CDN rewrite to every override
+            # file we just copied. Binary files are skipped automatically by
+            # rewrite_file() (UnicodeDecodeError → returns 0). Without this
+            # pass, override JSONs (getContainerList, getDefaultComponent, the
+            # 4 executeScript variants) ship raw github.com URLs and the
+            # client's offline downloads fail with NetUnknownHostException.
+            for root, _, files in os.walk(overrides):
+                rel_dir = os.path.relpath(root, overrides)
+                for name in files:
+                    dst_path = os.path.join(dst, rel_dir, name) if rel_dir != "." else os.path.join(dst, name)
+                    overrides_rewrites += rewrite_file(dst_path, UPSTREAM_CDN_PREFIX, new_cdn_prefix)
+            print(f"  apply  overrides/  files={overrides_applied}  rewrites={overrides_rewrites}  (from {overrides})")
+        total_rewrites += overrides_rewrites
 
     bundled_summary = None
     if args.bundled_components:

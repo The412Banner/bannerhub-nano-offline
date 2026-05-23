@@ -7,6 +7,8 @@ import android.util.Log;
 import java.io.IOException;
 import java.util.HashMap;
 
+import org.json.JSONObject;
+
 import fi.iki.elonen.NanoHTTPD;
 
 /**
@@ -103,13 +105,25 @@ public final class BannerHubLocalServer extends NanoHTTPD {
         // posts most BannerHub calls (EnvLayerRepository.fetchEnvTabs, etc.),
         // so without this drain the env-setting screen hangs indefinitely and
         // game launch never gets the data it needs.
+        //
+        // For application/json bodies, NanoHTTPD 2.3.1 puts the raw body in the
+        // map under key "postData" — used below by the executeScript dispatch.
+        HashMap<String, String> bodyFiles = new HashMap<>();
         Method m = session.getMethod();
         if (m != null && m != Method.GET && m != Method.HEAD) {
             try {
-                session.parseBody(new HashMap<String, String>());
+                session.parseBody(bodyFiles);
             } catch (Throwable ignored) {
-                // best-effort drain; we discard the body content
+                // best-effort drain; bodyFiles may end up empty
             }
+        }
+        // /simulator/executeScript dispatch: the live bannerhub-api Worker
+        // routes this single endpoint to one of four static variants based
+        // on the POST body's gpu_vendor + game_type. Without dispatch on our
+        // side, the bare path returns 404 and EnvLayerRepository.getGameConfig
+        // ByScript throws ConvertException → tap-Launch silent-fails.
+        if (m == Method.POST && "/simulator/executeScript".equals(path)) {
+            path = "/simulator/executeScript/" + executeScriptSuffix(bodyFiles.get("postData"));
         }
         try {
             if (path.startsWith("/components-cdn/")) {
@@ -121,5 +135,23 @@ public final class BannerHubLocalServer extends NanoHTTPD {
             return newFixedLengthResponse(Response.Status.INTERNAL_ERROR,
                     "text/plain", "internal error");
         }
+    }
+
+    /** Mirrors bannerhub-worker.js: gpu_vendor contains "qualcomm" picks the
+     *  qualcomm variant, otherwise generic; game_type === 0 appends _steam. */
+    static String executeScriptSuffix(String jsonBody) {
+        String gpu = "generic";
+        boolean steam = false;
+        if (jsonBody != null && !jsonBody.isEmpty()) {
+            try {
+                JSONObject o = new JSONObject(jsonBody);
+                String vendor = o.optString("gpu_vendor", "").toLowerCase();
+                if (vendor.contains("qualcomm")) gpu = "qualcomm";
+                if (o.has("game_type") && o.optInt("game_type", -1) == 0) steam = true;
+            } catch (Throwable ignored) {
+                // malformed body — fall through to generic default
+            }
+        }
+        return steam ? gpu + "_steam" : gpu;
     }
 }

@@ -1000,3 +1000,37 @@ The worker proxies this to landscape-api.vgabc.com for cover-art lookup (PC-EXE 
 Commit `785b0ac`. CDN cache hit expected. Same APK size, just the Java fix.
 
 ---
+
+## 2026-05-23 — Build #9 device test diagnosed → Build #10 (Phase 1) staged
+
+Build #9 (POST-body drain) was confirmed working on the device — `BH-NanoServer: Local API server started on http://127.0.0.1:51823/` in airplane mode, and a pre-flight `curl -X POST .../simulator/getTabList` returned HTTP 200 with real JSON in 2.1 ms. But end-to-end airplane test (fresh install → import → tap Launch) still failed with the user-reported triple symptom: (1) tap Launch did nothing, (2) component download failed with "no connection", (3) component picker list wrong (all-types or empty).
+
+### Diagnosis
+
+Two distinct bug clusters fell out of the airplane logcat (`/sdcard/Download/nano-build9-airplane.log`) + SharedPreferences + OkHttp cache inspection:
+
+**Cluster A — URL rewrites missed by `prepare_local_mirror.py --overrides-dir` pass.**
+The script's docstring said overrides were copied "verbatim, no URL rewrite, preserves binary content." The intent was right (preserve a JPG logo), but the side effect was that 63 raw github.com URLs across 6 override JSON files (getContainerList, getDefaultComponent, the 4 executeScript variants) made it into `assets/local-mirror/` untouched. So `sp_winemu_all_containers.xml` ended up with `download_url: https://github.com/The412Banner/bannerhub-api/releases/download/Components/wine_proton_10.0_x64.tar.zst` instead of the local CDN URL, and tap-Launch → wineprefix download → `NetUnknownHostException: github.com` → "no connection."
+
+**Cluster B — three routes returning 404 → Drake.Net ConvertException.**
+`/simulator/executeScript` (bare path, no suffix) — the live bannerhub-api Worker has dispatch logic that picks one of 4 static variants from the POST body's `gpu_vendor` + `game_type`. Our server didn't have that dispatch, so the bare path 404'd → `EnvLayerRepository.getGameConfigByScript` ConvertException → tap-Launch silent-fails. `/devices/getUnknownDevices` — bannerhub-api doesn't even list this route; live Worker falls through to upstream Xiaoji. Our server 404'd, ConvertException retried 3x. `/simulator/getLocalGameDetail` — same upstream-proxy story; not blocking import but adds log noise.
+
+(The 540-entry getComponentList catalog showing every component unfiltered is a separate Cluster C — picker curation — that lands in Phase 2; the device test never reaches it once the launch path is unblocked.)
+
+### Build #10 Phase 1 — three small fixes
+
+Targeted at unblocking the airplane launch path. Phase 2 (catalog curation + first-launch extraction to `files/components-cdn/`) deferred.
+
+1. **`prepare_local_mirror.py`: URL-rewrite the overrides pass.**
+   After the existing `copytree_overwrite(overrides, dst)` call, walk the overrides source tree and run `rewrite_file(...)` on each corresponding dst path. The existing `UnicodeDecodeError` guard in `rewrite_file()` skips binary files automatically (the logo JPG stays byte-identical). Local smoke test on a tmp dir: **63/63 github URLs rewritten across 6 override JSON files; binary logo unchanged.**
+
+2. **`data/local-mirror-overrides/devices/getUnknownDevices` new file.**
+   Minimal valid envelope: `{"code":200,"msg":"Operation completed","time":"1779489546","data":[]}`. Drake.Net's GsonConverter now has a JSON object to parse instead of a 404 empty body, so the three retry rounds resolve cleanly and the launch path continues.
+
+3. **`extension/server/BannerHubLocalServer.java`: executeScript dispatch.**
+   Stopped discarding the parseBody map. When `path == "/simulator/executeScript"` and method is POST, parse the JSON body (now available as `bodyFiles.get("postData")`), derive `gpu` from `gpu_vendor` (qualcomm vs generic) and `_steam` from `game_type === 0`, rewrite `path` to `/simulator/executeScript/{suffix}`, fall through to `assetServer.serve(path)`. Mirrors `bannerhub-worker.js` line 618 exactly. The 4 variant files already exist as overrides (`generic`, `generic_steam`, `qualcomm`, `qualcomm_steam`), and after fix #1 their URLs are also locally rewritten, so the chain ends at a real JSON response with local download URLs.
+
+### Phase 1 commit + Build #10
+
+About to commit all three changes as a single feat commit and dispatch build-quick.yml.
+
