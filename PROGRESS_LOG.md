@@ -1034,3 +1034,38 @@ Targeted at unblocking the airplane launch path. Phase 2 (catalog curation + fir
 
 About to commit all three changes as a single feat commit and dispatch build-quick.yml.
 
+
+## 2026-05-23 — Build #10 device airplane test = "task install imagefs failed" → Build #11
+
+### Build #10 device test (post-Phase-1)
+
+Substantial progress vs Build #9: full launch task chain executed (was abandoning silently before). Reached "Install ImageFs" step, then failed instantly with toast `task install imagefs failed`.
+
+Logcat: `/sdcard/Download/nano-build10-airplane.log`. Smoking gun was the **absence** of `executeScript` in `BH-NanoServer` log lines, combined with `PcEmuSetup: ▶ 开始任务: Download Game Config` completing in 1 ms and then `Install ImageFs - 固件未配置 (耗时: 0ms)` — "Firmware not configured", thrown after a config check that takes zero milliseconds (no network), meaning the task is reading per-game state that was never populated.
+
+SharedPreferences inspection confirmed Phase 1 URL rewrites all landed correctly:
+
+- `sp_winemu_all_imageFs.xml`: Firmware @ `http://127.0.0.1:51823/components-cdn/imagefs_141.zst` ✅
+- `sp_winemu_all_containers.xml`: proton10.0-x64-1 with 3/3 local URLs (incl. sub_data) ✅
+- `sp_winemu_all_components12.xml`: 540 entries, all 127.0.0.1 (curation still in Phase 2)
+
+The global imageFs cache is fine; the *per-game* scope `Install ImageFs` consults is empty.
+
+### Root cause: inherited "Apply Offline Launch smali patch" from v3.7.5 stable
+
+Both `build.yml` (lines 621-751) and `build-quick.yml` (lines 623-753) ran this patch step verbatim from BannerHub v3.7.5 stable. It adds three `NetworkUtils.r()` gates:
+
+1. `smali_classes8/com/xj/winemu/setup/tasks/GameConfigDownloadTask.smali` `executeInternal` — early-return Unit when offline → skips the `executeScript` HTTP call entirely.
+2. `smali_classes2/com/xj/winemu/setup/factory/SetupTaskFactory.smali` `g()` — omit `SetGameRecommConfigTask` when offline.
+3. Same factory — omit `DependencyInstallTask` when offline.
+
+v3.7.5's offline launch model: use cached per-game state from a prior online launch. Doesn't apply to nano-offline — we never had a prior online launch on a fresh airplane install, and we have a working local server. Gate #1 is why `executeScript` was never called → no per-game `GameEnvConfigEntity` populated → `Install ImageFs` sees no firmware reference → "固件未配置."
+
+### Build #11 fix
+
+Removed the entire "Apply Offline Launch smali patch" step from both `build.yml` and `build-quick.yml` (262 lines deleted total). Other `NetworkUtils.r()` callers (Steam launch strategy in `patches/smali_classes10/.../SteamGameByPcEmuLaunchStrategy$execute$3.smali`) are wanted Steam-specific offline bypasses and stay untouched — they're already in `patches/`, not added by the build workflows.
+
+Rejected alternative: force `NetworkUtils.r() → true` globally via smali. That would also flip the Steam bypasses → Steam tries to log in over the radio in airplane mode (bad).
+
+Expected post-Build-#11 launch flow: tap Launch → `GameConfigDownloadTask` runs normally → POST `/simulator/executeScript` → Build #10 dispatcher routes to right variant (generic/qualcomm × _steam?) → response carries `imagefs`, `container`, `component_ids` → `Install ImageFs` reads the per-game imagefs → downloads from `127.0.0.1:51823/components-cdn/imagefs_141.zst` (already bundled) → mount → game.
+
