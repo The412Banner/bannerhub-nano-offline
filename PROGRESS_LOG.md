@@ -310,3 +310,251 @@ Three possible outcomes:
 3. **Only first line OR no lines** → smali patch didn't link; reflection issue; need to inspect APK's classes8.dex more carefully or change approach
 
 ---
+
+## 2026-05-23 — Build #5 PRE-LAUNCH ANCHOR (resume-safe per [[feedback_save_memory_before_game_launch]])
+
+Build #5 APK confirmed installed via `getlog --exec "dumpsys package banner.nano.offline"`:
+- `versionCode=78`, `versionName=main`
+- `firstInstallTime = lastUpdateTime = 2026-05-23 10:22:02`
+- `codePath=/data/app/~~4I40tSY9oao1cIwzCox0cA==/banner.nano.offline-XpVrZKBcB7IcUitvtdlpxw==`
+
+Pre-launch state:
+- App **not running** (`pidof banner.nano.offline` empty)
+- Port **51823 NOT bound** (`ss -lnt` shows only 127.0.0.1:8765 = logcat-bridge itself)
+- Launcher activity = `banner.nano.offline/com.xj.app.DeepLinkRouterActivity`
+
+Capture plan (executed via logcat-bridge `getlog --exec` so it survives any PRoot OOM):
+```
+logcat -c
+monkey -p banner.nano.offline -c android.intent.category.LAUNCHER 1
+sleep 15
+logcat -d > /sdcard/Download/nano-offline-build5-launch.log
+```
+
+Persistent artifact: `/sdcard/Download/nano-offline-build5-launch.log` (full unfiltered dump, survives session kill).
+
+Success criteria (in priority order):
+1. `BH-NanoServer: startIfNotRunning() invoked` line present → reflection patch executed
+2. `BH-NanoServer: Local API server started on http://127.0.0.1:51823/` → bind succeeded
+3. Post-launch `ss -lnt | grep 51823` shows LISTEN → server is alive
+4. Curl from PRoot to `http://127.0.0.1:51823/components/box64_manifest` returns JSON → routes work
+5. (Visual, user-side) Steam tab + Windows PC import icon render in dashboard
+
+If success criteria 1–3 met but 5 fails → tab UI gating in `LandscapeLauncherMainActivity` (smali_classes11), separate diagnostic loop.
+
+Resume order if PRoot dies mid-launch: re-pull `/sdcard/Download/nano-offline-build5-launch.log`, grep for `BH-NanoServer|EggGameHttp|NanoHTTPD|fi.iki.elonen`, decide branch.
+
+---
+
+## 2026-05-23 — Build #5 device launch via logcat-bridge: SUCCESS ✓
+
+Launched at 10:38:25 via `getlog --exec "monkey -p banner.nano.offline -c android.intent.category.LAUNCHER 1"`. App PID 3059.
+
+**All three success criteria 1–3 hit:**
+
+1. ✅ `10:38:26.265 BH-NanoServer: startIfNotRunning() invoked` — **the App.onCreate reflection patch fired**
+2. ✅ `10:38:26.276 BH-NanoServer: Local API server started on http://127.0.0.1:51823/` — **NanoHttpd bound 11ms after invoke**
+3. ✅ Post-launch `ss -lnt`: `LISTEN [::ffff:127.0.0.1]:51823` — server alive
+4. ✅ Curl from PRoot to `/components/box64_manifest` → real JSON with 36 components, all `download_url` fields point at `http://127.0.0.1:51823/components-cdn/<file>.tzst`
+5. ✅ Curl `/base/getBaseInfo` → proper response (cloud_game_switch=2, both guide-img URLs rewritten to 51823)
+6. ✅ App's safety-net hook in EggGameHttpConfig also fires 25ms later, correctly idempotent: `BH-NanoServer: Already running`
+7. ✅ Main activity reached: `com.xj.landscape.launcher.ui.main.LandscapeLauncherMainActivity` "Displayed +305ms"
+
+Logcat artifact mirrored to `~/nano-offline-build5-launch.log` (2624 lines) AND `/sdcard/Download/nano-offline-build5-launch.log` (survives PRoot kill).
+
+### Two non-blocking issues found (polish for next build)
+
+**A. `/cloud/game/check_user_timer` route times out** — curl gets `Operation timed out after 5002ms with 0 bytes received`. App logcat shows `com.drake.net.exception.ConvertException`. Route is in GITHUB_ROUTES (worker.js:443) so should be a static-pass through, but local server isn't replying. Probably missing in `assets/local-mirror/` or routing bug. Need to grep `prepare_local_mirror.py` + the route handler.
+
+**B. `/components-cdn/bannerhub-api-logo.jpg` 404** — Glide tries to load this for the dashboard background. Not bundled. Fix: add a logo asset, or accept the silent 404 (no visible breakage in logs).
+
+### Outstanding visual check
+
+User to confirm: do Steam tab + Windows PC import icon now render in the dashboard? The app reached main activity cleanly and HTTP is flowing, so likely YES, but only visual confirmation closes outcome #1 vs #2.
+
+---
+
+## 2026-05-23 — Build #5 airplane-mode test — PRE-LAUNCH ANCHOR (user-run, claude offline)
+
+User running the actual MVP test (airplane mode + cold start) themselves. Claude Code session will lose net when WiFi+cellular drop — both run on the same Android device. logcat-bridge is localhost-only so it survives airplane, but Anthropic API does not.
+
+App force-stopped via `getlog --exec "am force-stop banner.nano.offline"` — PID empty, cold-start ready.
+
+Self-contained test script staged at `/sdcard/Download/run-build5-airplane-test.sh` (1718 bytes, root:root, mode 644). Invoke as: `su -c "sh /sdcard/Download/run-build5-airplane-test.sh"`. It performs in order:
+1. log airplane mode state
+2. snapshot port 51823 + 8765 before
+3. `am force-stop` + `logcat -c`
+4. `monkey -p banner.nano.offline -c android.intent.category.LAUNCHER 1`
+5. sleep 20
+6. snapshot PID + port state after
+7. curl `/components/box64_manifest` + `/base/getBaseInfo` against `127.0.0.1:51823`
+8. extract `BH-NanoServer` / `startIfNotRunning` lines from logcat
+9. dump full logcat
+
+Artifacts (both survive PRoot kill on /sdcard):
+- `/sdcard/Download/nano-offline-build5-airplane.log` — full logcat
+- `/sdcard/Download/nano-offline-build5-airplane-summary.txt` — at-a-glance summary
+
+Resume order when Claude is back online:
+1. `getlog --exec "cat /sdcard/Download/nano-offline-build5-airplane-summary.txt"` — quick verdict
+2. `getlog --exec "grep -E 'BH-NanoServer|EggGameHttp|FATAL|AndroidRuntime' /sdcard/Download/nano-offline-build5-airplane.log"` — key lines
+3. Compare to non-airplane run at `~/nano-offline-build5-launch.log` — any new endpoints that succeeded online but fail offline are gaps to plug
+
+Pass criteria (airplane edition):
+- A. NanoHttpd binds 51823 ✓ (proves App.onCreate eager-start works without net)
+- B. Both probe curls return HTTP 200 with non-zero bytes
+- C. Dashboard visually renders Steam tab + Windows PC import icon (user-side only)
+
+Fail patterns to watch for in summary:
+- Bind line missing → eager-start raced or threw silently
+- Both curls 200 but tabs missing → outcome #2 (UI gating in smali_classes11)
+- Any FATAL/AndroidRuntime line → app crashed; airplane exposed something the online run hid
+
+---
+
+## 2026-05-23 — Build #5 airplane-mode MVP test = PASS ✓ — offline-nano works
+
+User flipped airplane mode ON and ran the staged script. All pass criteria met. **The MVP goal of the project (install APK → use offline with zero outbound network) is achieved on Build #5.**
+
+Raw results from `/sdcard/Download/nano-offline-build5-airplane-summary.txt`:
+
+```
+=== airplane status ===
+1                                    ← airplane mode confirmed ON
+=== post-launch state ===
+PID: 6278                            ← new cold-start PID
+LISTEN  127.0.0.1:8765               ← logcat-bridge
+LISTEN  [::ffff:127.0.0.1]:51823     ← NanoHttpd bound under airplane
+=== HTTP probe to 127.0.0.1:51823 ===
+box64_manifest: HTTP 200 19064b
+getBaseInfo:    HTTP 200 308b
+=== BH-NanoServer lines ===
+10:47:24.619  BH-NanoServer: startIfNotRunning() invoked       ← App.onCreate fired
+10:47:24.630  BH-NanoServer: Local API server started on http://127.0.0.1:51823/
+10:47:24.652  BH-NanoServer: startIfNotRunning() invoked       ← safety net
+10:47:24.652  BH-NanoServer: Already running ...               ← idempotent no-op
+```
+
+Activity transitions captured:
+```
+10:47:25.139  Displayed banner.nano.offline/com.xj.app.SplashActivity +1s125ms
+10:47:26.532  Displayed banner.nano.offline/.../LandscapeLauncherMainActivity +300ms
+10:47:33.592  Displayed banner.nano.offline/com.xj.winemu.ui.fselector.WinEmuFileSelectorActivity +96ms  ← Windows PC import opened!
+```
+
+The third activity (`WinEmuFileSelectorActivity`) is the Windows PC import file picker — proving the **Windows PC import icon was visible on the dashboard, user tapped it, and the flow continued offline**. Strong indirect proof of outcome #1 (tabs/icons render). User to confirm Steam tab text-wise separately.
+
+Crash scan: 7 `FATAL|AndroidRuntime` lines, **all benign** — `com.android.commands.content` and `com.android.commands.monkey` shell tooling logging routine `AndroidRuntime` start/end markers, not our app process. Zero crashes attributable to `banner.nano.offline` (PID 6278).
+
+Artifacts:
+- `/sdcard/Download/nano-offline-build5-airplane-summary.txt` (1.5KB)
+- `/sdcard/Download/nano-offline-build5-airplane.log` (820KB full logcat)
+- `/sdcard/Download/run-build5-airplane-test.sh` (reusable test script)
+
+### Open polish items (Build #6 candidates)
+
+1. **`/cloud/game/check_user_timer` route**: Drake.Net `ConvertException` recurs 3x in ~8s (probably a poll). Curl manual probe times out — route is in GITHUB_ROUTES but local server doesn't reply. Most likely the JSON file is missing from `assets/local-mirror/cloud/game/` or the handler doesn't route POST→GET. Inspect `prepare_local_mirror.py` route enumeration + the running server's request log.
+2. **`bannerhub-api-logo.jpg`**: 6 hits of Glide 404. Dashboard tries to fetch this background image. Either bundle a logo into `assets/local-mirror/components-cdn/` or accept the silent miss.
+
+Neither blocks launch. Both should be Build #6 cleanup PR.
+
+### MVP status: **DONE pending user visual confirm of tab rows**
+
+Next milestone candidates (in priority order if user wants to push further):
+- Fix the two polish items → Build #6 release
+- README/docs pass for `bannerhub-nano-offline` repo (current README is bootstrap copy)
+- First public release of the offline-nano APK with proper version naming (v3.7.5-offline-nano-1 or similar)
+
+---
+
+## 2026-05-23 — Build #6 triggered (run `26335998718`) — two polish fixes
+
+Commit `66ecfb0` "polish: local-mirror overrides for check_user_timer + bundled logo" pushed to origin/main. Triggered Build APK (Quick — Normal only) workflow.
+
+### Architecture: local-mirror overrides
+
+`prepare_local_mirror.py` now accepts `--overrides-dir <dir>`. After the upstream `bannerhub-api/{components,simulator,base,card,cloud,devices,email,ems,game,heartbeat,upgrade,user,vtouch}` subtrees are copied AND URL-rewritten, every file under `<dir>` is copied on top of the destination verbatim. Override files bypass URL rewriting (binary-safe).
+
+In-repo overrides dir: `data/local-mirror-overrides/`. Two files in this commit:
+- `cloud/game/check_user_timer` — `"data": {}` (was `[]`, which made Drake.Net `ConvertException`)
+- `components-cdn/bannerhub-api-logo.jpg` — 997KB fetched from upstream GH Releases at build time wasn't an option (release assets are on a different host than the static repo); committed binary instead
+
+Both CI workflows (`build.yml` + `build-quick.yml`) now invoke prepare_local_mirror.py with `--overrides-dir data/local-mirror-overrides`.
+
+### LocalCdnServer fallback
+
+`LocalCdnServer` previously searched 3 FS locations for `/components-cdn/<file>` requests, all rooted in the user's component-manager storage. Added a 4th step: APK `assets/local-mirror/components-cdn/<file>` fallback for catalog-referenced static images (logos, backgrounds) that aren't user-managed components. Added a tiny `guessMime()` for common image extensions so Glide gets a sensible Content-Type instead of `application/octet-stream`.
+
+### Smoke test (PRoot, pre-push)
+
+```
+$ python3 scripts/prepare_local_mirror.py --src ~/bannerhub-api ...
+  copy   components/  files=10  rewrites=1644
+  ...
+  apply  overrides/  files=2  (from .../data/local-mirror-overrides)
+DONE. upstream_files=52 rewrites=3970 overrides=2
+```
+
+`cloud/game/check_user_timer` in output = `"data": {}` ✓
+`components-cdn/bannerhub-api-logo.jpg` in output = 997280 bytes JPEG ✓
+
+### Verification plan once Build #6 lands
+
+1. Install Build #6 APK, force-stop, cold launch (airplane mode optional but recommended)
+2. `curl http://127.0.0.1:51823/cloud/game/check_user_timer` → expect `"data":{}` not `"data":[]`
+3. `curl -o- http://127.0.0.1:51823/components-cdn/bannerhub-api-logo.jpg | wc -c` → expect 997280
+4. Logcat: zero `BH-NanoServer: CDN 404 bannerhub-api-logo.jpg`, zero `Drake.Net ConvertException` on check_user_timer
+5. Visual: PC Emulator card on dashboard now has the logo background
+
+---
+
+## 2026-05-23 — Build #6 GREEN ✓ + device-verified (online launch)
+
+Run `26335998718` succeeded in 3m57s. APK at
+`~/bannerhub-nano-offline-builds/BannerHub-pre-main-v6/BannerHub-pre-main/BannerHub-Nano-Offline-main-Normal.apk` (148.8 MB).
+
+### Pre-install APK sanity
+
+- `unzip -p ... assets/local-mirror/components-cdn/bannerhub-api-logo.jpg | wc -c` = `997280` ✓
+- `unzip -p ... assets/local-mirror/cloud/game/check_user_timer` = `{"code":200,...,"data":{}}` ✓
+
+### Device install + cold launch (online)
+
+Installed via `getlog --exec "pm install -r -d ..."` (Success). Force-stopped, logcat cleared, monkey-launched. PID 14891, port 51823 LISTEN.
+
+Curl probes from PRoot to `127.0.0.1:51823`:
+
+| Endpoint | Result |
+|---|---|
+| `/components-cdn/bannerhub-api-logo.jpg` | HTTP 200, 997280 bytes, `Content-Type: image/jpeg` ✓ |
+| `/cloud/game/check_user_timer` | `{...,"data":{}}` ✓ |
+
+Logcat noise comparison vs Build #5:
+
+| Signal | Build #5 | Build #6 | Δ |
+|---|---|---|---|
+| `CDN 404 bannerhub-api-logo` (our server) | 6 | **0** | ✅ eliminated |
+| `Glide: Load failed.*bannerhub-api-logo` | 6 | **0** | ✅ eliminated |
+| `ConvertException` on `check_user_timer` | 3 | **1** | ⚠️ reduced 66%, residual |
+
+### Residual: 1 ConvertException remains on check_user_timer
+
+Stack trace shows it's still parsing through `HomeInfoRepository$checkUserTimer$1...$Post$default$1`. Our fix `data: []` → `data: {}` improved parseability — the app no longer retries (which gave us the 3→1 drop) but the strict Drake.Net DTO still can't satisfy itself with an empty object.
+
+Confirmed via online probe of `https://bannerhub-api.the412banner.workers.dev/cloud/game/check_user_timer` — **the live Cloudflare Worker serves the same `"data": []`**, meaning this exception has existed against the real API as well. Long-standing upstream noise that we've now made quieter.
+
+To fully eliminate would require knowing the exact DTO field shape (likely something like `{timer_remaining: 0, can_play: true, ...}`). Not worth a decompile right now — diminishing returns.
+
+### MVP polish status: SHIPPED ✓
+
+Both polish items materially addressed:
+- Logo: **100% fixed** — proper image served, zero 404s anywhere
+- check_user_timer: **partial** — reduced noise 66%, app behavior unchanged (it was non-fatal at 3 already)
+
+### Open items (deferrable)
+
+- README/docs pass for the `bannerhub-nano-offline` repo (current README is BannerHub bootstrap copy)
+- Visual confirmation: dashboard PC Emulator card now shows logo as back_img (user-side check)
+- First proper release tag (e.g. `v3.7.5-offline-nano-1`) if user wants a public release
+
+---
