@@ -10,7 +10,7 @@
 
 ## TL;DR
 
-Add an embedded NanoHttpd server to BannerHub 3.7.5 that mirrors the static-route output of bannerhub-api. The app's API base URL is funneled through one smali method (`GameHubPrefs.getEffectiveApiUrl`); patching that to return `http://127.0.0.1:8765/` captures every outbound API call. Catalog JSON + simulator endpoints are baked into `assets/local-mirror/`, with `download_url` fields pre-rewritten to point at the local server's CDN endpoint. Component file delivery (.wcp / .tzst) is served from the existing component-manager storage path. Dynamic routes (chat, vgabc proxy, token refresh) are intentionally **not** mirrored — they fail and fall through to v3.7.5's existing offline-launch path.
+Add an embedded NanoHttpd server to BannerHub 3.7.5 that mirrors the static-route output of bannerhub-api. The app's API base URL is funneled through one smali method (`GameHubPrefs.getEffectiveApiUrl`); patching that to return `http://127.0.0.1:51823/` captures every outbound API call. Catalog JSON + simulator endpoints are baked into `assets/local-mirror/`, with `download_url` fields pre-rewritten to point at the local server's CDN endpoint. Component file delivery (.wcp / .tzst) is served from the existing component-manager storage path. Dynamic routes (chat, vgabc proxy, token refresh) are intentionally **not** mirrored — they fail and fall through to v3.7.5's existing offline-launch path.
 
 ---
 
@@ -61,7 +61,7 @@ Replace the entire body of `getEffectiveApiUrl(Ljava/lang/String;)Ljava/lang/Str
     # BannerHub Offline Nano: lazy-start embedded NanoHttpd, return localhost
     invoke-static {}, Lapp/revanced/extension/gamehub/server/BannerHubLocalServer;->startIfNotRunning()V
 
-    const-string p0, "http://127.0.0.1:8765/"
+    const-string p0, "http://127.0.0.1:51823/"
 
     return-object p0
 .end method
@@ -112,7 +112,7 @@ https://github.com/The412Banner/bannerhub-api/releases/download/Components/<file
 
 Build-time Python script `scripts/prepare_local_mirror.py` (new file):
 1. Reads each JSON file in `assets/local-mirror/`
-2. Replaces the GitHub Releases URL prefix with `http://127.0.0.1:8765/components-cdn/`
+2. Replaces the GitHub Releases URL prefix with `http://127.0.0.1:51823/components-cdn/`
 3. Writes the result back
 
 This keeps the rewrite logic out of NanoHttpd (which becomes a dumb file server).
@@ -149,11 +149,11 @@ This is the lesser-surface change.
 
 ### 8. Port strategy
 
-**Pinned: 8765.** No discovery, no smali surgery for ephemeral ports.
+**Pinned: 51823.** No discovery, no smali surgery for ephemeral ports.
 
-Risk mitigation: if 8765 is bound by another process, `NanoHTTPD.start()` throws. We catch and retry on 8766, 8767, … up to 8775. The chosen port is stored in a static field and `getEffectiveApiUrl` returns the corresponding URL. (This adds a tiny bit of surgery — defer to v2 if MVP can pin and ship.)
+Risk mitigation: if 51823 is bound by another process, `NanoHTTPD.start()` throws. We catch and retry on 51824, 51825, … up to 51833. The chosen port is stored in a static field and `getEffectiveApiUrl` returns the corresponding URL. (This adds a tiny bit of surgery — defer to v2 if MVP can pin and ship.)
 
-For MVP: pin 8765, if bind fails, log + crash. Loopback collision on a single-app Android sandbox is extremely rare.
+For MVP: pin 51823, if bind fails, log + crash. Loopback collision on a single-app Android sandbox is extremely rare.
 
 ---
 
@@ -187,7 +187,7 @@ Insert after "Decompile APK" step, before "Apply smali patches":
        python3 scripts/prepare_local_mirror.py \
          --src ../bannerhub-api \
          --dst apktool_out_base/assets/local-mirror \
-         --base-url http://127.0.0.1:8765
+         --base-url http://127.0.0.1:51823
    ```
    (Script clones bannerhub-api at a pinned commit; or vendor a pre-generated mirror in this repo.)
 

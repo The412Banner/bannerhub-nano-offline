@@ -768,7 +768,7 @@ jobs:
               '    # BannerHub Nano Offline: lazy-start embedded server, force localhost base URL.\n'
               '    invoke-static {}, Lapp/revanced/extension/gamehub/server/BannerHubLocalServer;->startIfNotRunning()V\n'
               '\n'
-              '    const-string v0, "http://127.0.0.1:8765/"\n'
+              '    const-string v0, "http://127.0.0.1:51823/"\n'
               '\n'
               '    sput-object v0, Lcom/xj/common/http/EggGameHttpConfig;->b:Ljava/lang/String;\n'
           )
@@ -787,7 +787,7 @@ jobs:
           python3 scripts/prepare_local_mirror.py \
             --src /tmp/bannerhub-api \
             --dst apktool_out_base/assets/local-mirror \
-            --base-url http://127.0.0.1:8765
+            --base-url http://127.0.0.1:51823
 
       - name: Install network security config (cleartext to 127.0.0.1 only)
         run: |

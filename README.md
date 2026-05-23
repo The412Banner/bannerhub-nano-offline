@@ -39,7 +39,7 @@ These features need internet by design and will fail gracefully:
 
 ## How it works
 
-The Cloudflare Worker that BannerHub normally talks to has been baked into the APK as a tiny embedded HTTP server. At startup the app calls `GameHubPrefs.getEffectiveApiUrl(...)` which has been patched to lazy-start the local NanoHttpd server and return `http://127.0.0.1:8765/`. Every Retrofit/OkHttp client built downstream uses that base URL. The server reads its catalog from `assets/local-mirror/` (a snapshot of the bannerhub-api static output) and serves component `.wcp` / `.tzst` files from the Component Manager's storage path.
+The Cloudflare Worker that BannerHub normally talks to has been baked into the APK as a tiny embedded HTTP server. At startup the app calls `GameHubPrefs.getEffectiveApiUrl(...)` which has been patched to lazy-start the local NanoHttpd server and return `http://127.0.0.1:51823/`. Every Retrofit/OkHttp client built downstream uses that base URL. The server reads its catalog from `assets/local-mirror/` (a snapshot of the bannerhub-api static output) and serves component `.wcp` / `.tzst` files from the Component Manager's storage path.
 
 See [`OFFLINE_NANO_DESIGN.md`](OFFLINE_NANO_DESIGN.md) for full architecture details.
 

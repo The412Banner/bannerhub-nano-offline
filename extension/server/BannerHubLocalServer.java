@@ -21,7 +21,14 @@ import fi.iki.elonen.NanoHTTPD;
 public final class BannerHubLocalServer extends NanoHTTPD {
 
     private static final String TAG = "BH-NanoServer";
-    static final int PORT = 8765;
+
+    // Port chosen from the IANA dynamic/private range (49152-65535) — no
+    // registered services here, and dev tools typically pick lower (8000s,
+    // 9000s) so collisions are vanishingly rare. Specifically 51823 to avoid
+    // round numbers (50000) and known utilities (49152 ephemeral start, 51234
+    // debug ports). If something does happen to occupy 51823 on a device,
+    // NanoHTTPD.start() throws IOException and we log "Failed to bind".
+    static final int PORT = 51823;
 
     private static volatile BannerHubLocalServer instance;
     private static final Object LOCK = new Object();

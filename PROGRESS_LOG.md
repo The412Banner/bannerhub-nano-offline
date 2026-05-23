@@ -168,9 +168,50 @@ sdkVersion='29'  targetSdkVersion='35'
 
 Device test — airplane mode ON, sideload, verify:
 1. App starts without network
-2. NanoHttpd binds `127.0.0.1:8765` (logcat: `BH-NanoServer: Local API server started on http://127.0.0.1:8765/`)
+2. NanoHttpd binds (logcat: `BH-NanoServer: Local API server started on ...`)
 3. Component picker UI shows catalog from in-APK mirror
 4. User can import a `.wcp` via the existing Component Manager
 5. Game launch works offline (falls through to v3.7.5 offline-launch path)
+
+---
+
+## 2026-05-23 — Device test result: app launches ✓ but dashboard tabs missing
+
+User installed `BannerHub-Nano-Offline-main-Normal.apk` and reported:
+- ✅ App launches fine offline
+- ❌ Dashboard missing Steam tab + Windows PC game import icon
+
+### Diagnosis: port collision with logcat-bridge daemon
+
+Investigation via on-device tooling (PRoot, `ss`):
+
+```
+$ ss -lnt | grep 127.0.0.1
+LISTEN 0 5   127.0.0.1:8765   0.0.0.0:*    ← logcat-bridge daemon
+LISTEN 0 128 127.0.0.1:443    0.0.0.0:*
+LISTEN 0 128 127.0.0.1:80     0.0.0.0:*
+
+$ getlog --ping
+pong
+```
+
+The `logcat-bridge` Magisk module (token-gated logcat→Termux bridge, installed on this device since 2026-05-18) binds `127.0.0.1:8765` at boot — **the exact port BannerHubLocalServer tries to bind**.
+
+When the app boots: NanoHTTPD.start() throws `IOException: bind` (port taken), the static `instance` field stays null, but the OkHttp/Retrofit base URL is hardcoded to `http://127.0.0.1:8765/`. Every HTTP request the app makes goes to the logcat daemon, which expects token-prefixed text and either hangs the connection or closes immediately. App-side handlers receive nothing → tabs gated on API responses don't render.
+
+This explains the EXACT symptom: app starts fine (no crash, NanoHttpd failure was caught) but anything that depends on a successful API response is broken.
+
+### Fix: port 8765 → 51823
+
+Switched to **51823** (IANA dynamic/private range 49152-65535, no registered services, unlikely to collide with anything else):
+
+- `extension/server/BannerHubLocalServer.java` — `PORT = 51823` with explanatory comment
+- `.github/workflows/build-quick.yml` — EggGameHttpConfig patch and `prepare_local_mirror.py --base-url` updated
+- `.github/workflows/build.yml` — same two
+- `README.md` + `OFFLINE_NANO_DESIGN.md` — port references updated
+
+### Open question
+
+If 51823 is also taken on some other user's device, NanoHttpd will fail silently the same way. Robust fix (deferred): on bind failure, try 51824-51833, store the chosen port in a static field, have the smali patch read it via reflection. For MVP, 51823 in the dynamic range should be safe on essentially every device.
 
 ---
