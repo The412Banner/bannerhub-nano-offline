@@ -941,3 +941,62 @@ Regex anchor: `\.method public final a\(\)Z\n.*?\.end method\n` with DOTALL. Smo
 Commit `7babca1`. CDN cache hit expected (no bundle-config change), so build should be much faster than #7 (~5 min vs ~6 min).
 
 ---
+
+## 2026-05-23 — Build #8 airplane test: dashboard fixed, game-launch still dead → POST-body NanoHTTPD bug
+
+Build #8 fresh install in airplane mode:
+- ✅ App installs cleanly
+- ✅ Steam + Windows cards populate (interceptor patch worked — `OfflineCacheInterceptor: Network unavailable` count = 0)
+- ✅ User can add a game (`WinEmuFileSelectorActivity` → `GameDetailActivity`)
+- ❌ Tapping launch does nothing — `WinEmuEnvSettingActivity` opens but env tabs never load → user can't pick container / DXVK / driver → launch button can't fire the install flow
+
+Filtered traffic showed every `Post$default$1` Drake.Net call hitting ConvertException:
+
+```
+E ImportGameViewModel: fetchGameInfoByExeFileName failure : ConvertException
+  ... /simulator/getLocalGameDetail
+W EnvLayerRepository$fetchEnvTabs$2$invokeSuspend$$inlined$Post$default$1
+  GsonConverter.a() ... /simulator/getTabList
+W ... /devices/getDevicesList
+W ... /devices/getUnknownDevices
+```
+
+### Reproduction (from PRoot, against installed Build #8)
+
+```
+$ curl -X POST -d '{}' http://127.0.0.1:51823/simulator/getTabList
+-> HTTP 000 (timeout)
+
+$ curl -X POST -d '' http://127.0.0.1:51823/simulator/getTabList
+-> HTTP 200 OK + body (552b)
+```
+
+POST with non-empty body times out. GET works fine. **POST handling is broken in our NanoHTTPD when there's a request body to drain.**
+
+### Root cause: NanoHTTPD requires `session.parseBody()` for non-GET methods
+
+NanoHTTPD's worker thread reads request headers from the socket and dispatches to `serve(IHTTPSession)`. If the request has a body and `parseBody()` is not called, those bytes stay in the socket; the worker's `serve()` returns a response but on the way out NanoHTTPD's internal book-keeping (read pump waiting on the body, keep-alive handling, content-length sanity) stalls — the response is buffered but the client never sees it. Drake.Net's POST defaults always include a `Content-Type: application/json` and a body (`{}` if no params), so **every** POST endpoint hung.
+
+This explains why Build #6 / #7 "first-launch HTTP" looked clean to us: every call we manually probed via curl from PRoot was GET. The Build #8 e2e was the first time the app exercised real POSTs through our server with the interceptor stopped from short-circuiting them.
+
+### Fix (Build #9): drain non-GET bodies in `BannerHubLocalServer.serve()`
+
+```java
+Method m = session.getMethod();
+if (m != null && m != Method.GET && m != Method.HEAD) {
+    try { session.parseBody(new HashMap<String, String>()); }
+    catch (Throwable ignored) { /* best-effort drain */ }
+}
+```
+
+We discard parsed values — every URL we mirror serves static content keyed on the path alone. The call exists purely to let NanoHTTPD's worker close the response cleanly.
+
+### Out-of-scope-but-noted: `/simulator/getLocalGameDetail` is dynamic upstream
+
+The worker proxies this to landscape-api.vgabc.com for cover-art lookup (PC-EXE recognition). Our local mirror can't serve real content offline. After the POST-drain fix our server will respond with 404 (file not bundled) → app's `ImportGameViewModel.fetchGameInfoByExeFileName` will throw ConvertException → caller handles it; game gets imported without cover art. Cosmetic, not blocking. Could later add a `getLocalGameDetail` stub in `data/local-mirror-overrides/` if it irritates.
+
+### Build #9 triggered: run `26338664083`
+
+Commit `785b0ac`. CDN cache hit expected. Same APK size, just the Java fix.
+
+---
