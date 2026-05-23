@@ -818,3 +818,61 @@ Fail patterns to watch for:
 Optionally capture a focused logcat during the install via `getlog -f banner.nano.offline | tee /sdcard/Download/install-flow-test.log` so we can debug if anything goes wrong.
 
 ---
+
+## 2026-05-23 — E2E airplane test PRE-FLIGHT (user-run, fresh install → game launch)
+
+User pivot from incremental install-flow test → **full end-to-end test**: airplane mode ON, install Build #7 from scratch (already uninstalled prior build), set up the app, launch a game. All-in-one offline acceptance.
+
+Pre-flight state verified via bridge:
+- `banner.nano.offline` NOT installed (`pm list packages` confirms only `banner.hub` legacy + `com.banner.inject` remain)
+- APK present at `/sdcard/Download/BannerHub-Nano-Offline-v7.apk` (735 MB)
+- No `/data/data/banner.nano.offline/` data dir (truly clean install ahead)
+- No leftover `/sdcard/BannerHub/components/` (just `configs/` from legacy install — harmless; different package)
+
+### Capture script staged
+
+`/sdcard/Download/e2e-capture.sh` (3.7 KB, root:root). Three modes:
+
+| Command | Purpose |
+|---|---|
+| `su -c "sh /sdcard/Download/e2e-capture.sh start"` | BEFORE install. Clears logcat, starts background continuous logcat (-v threadtime -b all) to `/sdcard/Download/e2e-logcat.log` |
+| `su -c "sh /sdcard/Download/e2e-capture.sh snap <label>"` | At any milestone. Appends PID/ports/install-dir snapshot to `/sdcard/Download/e2e-state.log` |
+| `su -c "sh /sdcard/Download/e2e-capture.sh stop"` | At end (or if stuck). Kills logcat, generates a filtered `e2e-server-traffic.log` (BH-NanoServer, NanoHTTPD, ActivityTaskManager, FATAL, Wine, Box64, FEX, DXVK, VKD3D, etc.) |
+
+### Recommended snap labels during the run
+
+- `snap pre-install` (after running `start`, BEFORE tapping the APK in file manager)
+- `snap post-install` (after the OS install completes)
+- `snap first-launch` (after the app finishes splash → main activity)
+- `snap setup-done` (after any first-run component install / wineprefix init completes)
+- `snap game-import` (after adding a game)
+- `snap pre-game-launch` (right before tapping play on the game)
+- `snap post-game-launch` (after the game window appears or the launch errors)
+
+### Critical signals the captures will reveal
+
+| Question | Where to look |
+|---|---|
+| Did NanoHttpd bind on 51823? | `e2e-server-traffic.log` for `BH-NanoServer: Local API server started` |
+| Did the first-run install script run? | `e2e-logcat.log` for `executeScript` / `qualcomm` references; HTTP fetches to `127.0.0.1:51823/simulator/executeScript/qualcomm` |
+| Did wine_proton/imagefs/base.tzst all download from the embedded server? | `e2e-server-traffic.log` for NanoHTTPD GET lines (every served URL gets a line) |
+| Did the wineprefix initialize? | `snap setup-done` dir listing — look for `drive_c/`, `system.reg`, `user.reg` in /data/data/banner.nano.offline/files/ |
+| Did the game launch start Box64+DXVK? | `e2e-server-traffic.log` for `Box64`, `DXVK`, `wine` lines in the seconds after game-play tap |
+| Any FATAL? | `e2e-server-traffic.log` end |
+
+### Resume order when claude is back online
+
+1. `getlog --exec "cat /sdcard/Download/e2e-state.log"` — chronological story of the run
+2. `getlog --exec "cat /sdcard/Download/e2e-server-traffic.log | head -200"` — filtered signals
+3. If anything off: pull full `e2e-logcat.log` to PRoot for grep
+4. Cross-reference snap labels against state-log timestamps to bracket the failure window
+
+### Pass criteria for the E2E test
+
+- App installs cleanly from APK in airplane mode (no Play Protect blocker, no signature error)
+- First-launch executes the install script — wine_proton + imagefs + base.tzst all served from embedded NanoHttpd
+- Container initializes (wineprefix written)
+- A game is importable
+- Game launch reaches a visible Wine window (even if the game itself errors, that's a Wine concern not ours — we just need to prove the offline plumbing carries it that far)
+
+---
