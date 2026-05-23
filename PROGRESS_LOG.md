@@ -284,3 +284,29 @@ Also added an entry-log `Log.i(TAG, "startIfNotRunning() invoked")` at the top o
 If after the eager-start the tabs STILL don't appear, the next hypothesis is that the BannerHub tab-adding smali patches in smali_classes11 (LandscapeLauncherMainActivity) have their own conditional gates we'd need to bypass. We'd see that as: NanoHttpd binds 51823 in logcat, but the tab UI still hides them. That'd be a fresh diagnostic loop. The current bet: eager-start makes the classes18.dex extension active → tabs registered → visible.
 
 ---
+
+## 2026-05-23 — Build #5 GREEN ✓ — eager-start patch verified in APK
+
+Run `26334724044` succeeded in 3m49s. APK at
+`~/bannerhub-nano-offline-builds/BannerHub-pre-main/BannerHub-Nano-Offline-main-Normal.apk`.
+
+Verified via `unzip -p classes8.dex | strings`:
+- `app.revanced.extension.gamehub.server.BannerHubLocalServer` literal present
+- `startIfNotRunning` literal present
+
+Both confirm the App.onCreate reflection call was baked into classes8.dex.
+
+User reinstall + relaunch. Expected logcat (App.onCreate runs as first thing
+after process start):
+
+```
+I/BH-NanoServer: startIfNotRunning() invoked
+I/BH-NanoServer: Local API server started on http://127.0.0.1:51823/
+```
+
+Three possible outcomes:
+1. **Both lines appear + tabs render** → eager-start fixed it; offline-nano MVP works
+2. **Both lines appear, tabs still missing** → server is up but the tab UI has its own gating; next diagnostic on LandscapeLauncherMainActivity (smali_classes11)
+3. **Only first line OR no lines** → smali patch didn't link; reflection issue; need to inspect APK's classes8.dex more carefully or change approach
+
+---
