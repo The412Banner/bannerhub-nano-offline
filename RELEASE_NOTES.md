@@ -4,7 +4,7 @@ First stable. A fully offline build of BannerHub v3.7.5 — install, import a PC
 
 ## Ships with **Proton 10.0 x64 only**
 
-This release bundles a single compatibility layer: `proton10.0-x64` wineprefix. If you need a different container (Proton 11, Wine native, etc.), add it via the in-app Component Manager after install. Future releases will expand the bundled container set.
+This release bundles a single compatibility layer: `proton10.0-x64` wineprefix. **Additional containers (Proton 11, Wine native, etc.) cannot be added by the user in v0.1** — the in-app Component Manager handles components (translators, DXVK, VKD3D, drivers, libraries), not containers. More compatibility layers will ship baked-in via future releases.
 
 Bundled curated set (everything else BannerHub 5.x needs to launch a PC game):
 
