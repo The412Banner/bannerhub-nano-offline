@@ -1,0 +1,12 @@
+apktool_out/
+jadx_out/
+base/
+rebuilt-*.apk
+*.apk
+
+# Local decompile/build artifacts
+base_decompiled/
+apktool_out_base_v2.3.5.zip
+component-manager-patch.zip
+apktool_out*/
+base/
