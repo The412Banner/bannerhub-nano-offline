@@ -876,3 +876,68 @@ Pre-flight state verified via bridge:
 - Game launch reaches a visible Wine window (even if the game itself errors, that's a Wine concern not ours — we just need to prove the offline plumbing carries it that far)
 
 ---
+
+## 2026-05-23 — Build #7 E2E airplane test: SHELL-WORKING but DASHBOARD-DEAD → root-caused
+
+User installed Build #7 fresh in airplane mode. App launched, NanoHttpd bound on 51823 (PID 22501 then PID 22798 — relaunched but no crash; activity reached `LandscapeLauncherMainActivity` cleanly both times). However: **no Steam tab, no Windows tab on the dashboard.**
+
+Forensic pull from `/sdcard/Download/e2e-logcat.log` revealed the actual failure:
+
+```
+W OfflineCacheInterceptor: Network unavailable, using cache for: http://127.0.0.1:51823/devices/getDevicesList
+W OfflineCacheInterceptor: Network unavailable, using cache for: http://127.0.0.1:51823/simulator/v2/getAllComponentList?page=1&page_size=1000
+W OfflineCacheInterceptor: Network unavailable, using cache for: http://127.0.0.1:51823/card/getTopPlatform
+E MyPrint : getTopPlatform 获取失败 (failed): Network unavailable and no cache available
+```
+
+### Root cause: app's OfflineCacheInterceptor pre-empts every HTTP GET in airplane mode
+
+`com.xj.common.http.interceptor.OfflineCacheInterceptor` (smali_classes3) wraps the app's OkHttp client. Decompiled flow:
+
+```java
+public Response intercept(Chain chain) {
+    Request request = chain.request();
+    if (!request.method().equals("GET")) return chain.proceed(request);
+    if (b()) return chain.proceed(request);     // <-- b() returns cached connectivity
+    // Network unavailable: rewrite as onlyIfCached + maxStale(MAX) request
+    request = request.newBuilder().cacheControl(...).build();
+    Response resp = chain.proceed(request);
+    if (resp.code() == 504) throw new IOException("Network unavailable and no cache available");
+    return resp;
+}
+```
+
+`b()` returns a cached value of `a()`, refreshed every 1s. `a()` calls:
+```java
+ConnectivityManager.getActiveNetwork()
+NetworkCapabilities.hasCapability(NET_CAPABILITY_INTERNET)
+NetworkCapabilities.hasCapability(NET_CAPABILITY_VALIDATED)
+```
+
+In airplane mode both capabilities are absent → `a()=false` → `b()=false` → every GET becomes an onlyIfCached lookup against the OkHttp cache. On a **fresh install** the cache is empty, so every dashboard-card and component-list call throws.
+
+### Why Build #6 appeared to work in airplane
+
+Build #6 was upgrade-installed over earlier launches whose **online** traffic populated the OkHttp cache. The cache served the cards from disk under airplane. Build #7 is the first fresh-install test → exposed the bug. The interceptor has been actively hostile to offline-nano since day 1; we just couldn't see it.
+
+### Patch (Build #8): force `a()` to always return true
+
+Smali patch in both `build.yml` + `build-quick.yml`. Replaces the entire `OfflineCacheInterceptor.a()Z` method body with:
+
+```smali
+.method public final a()Z
+    .locals 1
+    const/4 v0, 0x1
+    return v0
+.end method
+```
+
+`b()` refreshes from `a()` within 1s so the gating disappears completely. Every URL the app hits is 127.0.0.1; the ConnectivityManager probe is meaningless and actively harmful here.
+
+Regex anchor: `\.method public final a\(\)Z\n.*?\.end method\n` with DOTALL. Smoke-tested locally against upstream smali — exactly 1 substitution, `b()` / `intercept()` / constructors all preserved.
+
+### Build #8 triggered: run `26338229272`
+
+Commit `7babca1`. CDN cache hit expected (no bundle-config change), so build should be much faster than #7 (~5 min vs ~6 min).
+
+---
