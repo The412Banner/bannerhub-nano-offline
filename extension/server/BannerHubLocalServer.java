@@ -37,9 +37,14 @@ public final class BannerHubLocalServer extends NanoHTTPD {
         return "http://127.0.0.1:" + PORT + "/";
     }
 
-    /** Idempotent, thread-safe. Called from the patched getEffectiveApiUrl. */
+    /** Idempotent, thread-safe. Called eagerly from App.onCreate (via reflection)
+     *  AND defensively from EggGameHttpConfig.&lt;clinit&gt; (direct invoke). */
     public static void startIfNotRunning() {
-        if (instance != null && instance.isAlive()) return;
+        Log.i(TAG, "startIfNotRunning() invoked");
+        if (instance != null && instance.isAlive()) {
+            Log.i(TAG, "Already running on " + getBaseUrl());
+            return;
+        }
         synchronized (LOCK) {
             if (instance != null && instance.isAlive()) return;
             Context ctx = resolveAppContext();

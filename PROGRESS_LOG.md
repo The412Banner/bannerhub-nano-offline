@@ -229,3 +229,58 @@ End-to-end verified post-build:
 User to uninstall the previous build, reinstall this APK, relaunch. Expected: dashboard renders Steam tab + Windows PC import icon now that NanoHttpd actually binds. If not, next diagnostic is fresh `getlog -p banner.nano.offline` against the offline-nano package.
 
 ---
+
+## 2026-05-23 — Build #4 device test: tabs STILL missing → diagnosis & fix
+
+User reinstalled build #4 APK. Result:
+- ✅ App launches offline
+- ❌ Dashboard still hides Steam tab + Windows PC import icon
+
+### Live diagnosis via on-device logcat-bridge
+
+Pulled fresh logcat against `banner.nano.offline` PID 5045 (the first launch session). Filtered for `BH-NanoServer|EggGameHttp|NanoHTTPD|fi.iki.elonen|reflect`:
+
+**Zero matches.** Not a single line from our server, not "Failed to bind", not "Local API server started". Combined with **zero OkHttp/HTTP activity in the entire 19K-line log dump**, the conclusion is clear:
+
+> The app is so network-gated that it never makes a single HTTP call when offline → `EggGameHttpConfig.<clinit>` never executes → our `startIfNotRunning()` invoke is never reached → NanoHttpd never starts → tabs that depend on extension code in classes18.dex never appear because the dex never gets linked into the active code path either.
+
+The lazy-start hook on `getEffectiveApiUrl` was the wrong place. We need a hook upstream of ALL network checks.
+
+### Fix: eager-start from `Application.onCreate`
+
+Found `com.xj.app.App` is the declared Application class (smali_classes8/com/xj/app/App.smali, `<application android:name>` in manifest). `onCreate()` body at line 424 starts with `invoke-super` then BannerHub bootstrap. Wedging the eager-start call right after `super.onCreate()` guarantees NanoHttpd is up before any other code runs.
+
+**Smali patch** (build-quick.yml + build.yml, anchored on the `super.onCreate()V` + `.line 4` block right after it):
+
+```smali
+:try_start_bn_eager
+const-string v0, "app.revanced.extension.gamehub.server.BannerHubLocalServer"
+invoke-static {v0}, Ljava/lang/Class;->forName(Ljava/lang/String;)Ljava/lang/Class;
+move-result-object v0
+const-string v1, "startIfNotRunning"
+const/4 v2, 0x0
+new-array v3, v2, [Ljava/lang/Class;
+invoke-virtual {v0, v1, v3}, Ljava/lang/Class;->getMethod(...)Ljava/lang/reflect/Method;
+move-result-object v0
+const/4 v1, 0x0
+new-array v2, v2, [Ljava/lang/Object;
+invoke-virtual {v0, v1, v2}, Ljava/lang/reflect/Method;->invoke(...)Ljava/lang/Object;
+:try_end_bn_eager
+.catch Ljava/lang/Throwable; {...} :catch_bn_eager
+goto :goto_bn_after_eager
+:catch_bn_eager
+move-exception v0
+:goto_bn_after_eager
+```
+
+**Why reflection** instead of a direct `invoke-static`: smali_classes6 already overflowed once. smali_classes8 is also patched by existing BannerHub patches. Adding a new type ref (`BannerHubLocalServer`) to smali_classes8's ref table risks a repeat. Reflection only uses `java.lang.Class`, `java.lang.reflect.Method`, `java.lang.Throwable` — all already referenced everywhere.
+
+**EggGameHttpConfig patch stays** as a safety net (idempotent — second call is a no-op).
+
+Also added an entry-log `Log.i(TAG, "startIfNotRunning() invoked")` at the top of `BannerHubLocalServer.startIfNotRunning()` so even if bind fails we'll see proof the method ran in logcat.
+
+### Open question (deferred)
+
+If after the eager-start the tabs STILL don't appear, the next hypothesis is that the BannerHub tab-adding smali patches in smali_classes11 (LandscapeLauncherMainActivity) have their own conditional gates we'd need to bypass. We'd see that as: NanoHttpd binds 51823 in logcat, but the tab UI still hides them. That'd be a fresh diagnostic loop. The current bet: eager-start makes the classes18.dex extension active → tabs registered → visible.
+
+---

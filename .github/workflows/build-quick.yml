@@ -804,6 +804,57 @@ jobs:
           print("GameDetailActivity auto-launch finish patch applied.")
           PYEOF
 
+      - name: Patch App.onCreate — eager-start embedded NanoHttpd server
+        run: |
+          python3 << 'PYEOF'
+          import sys
+          path = 'apktool_out/smali_classes8/com/xj/app/App.smali'
+          content = open(path, encoding='utf-8').read()
+          # Anchor: the first thing onCreate() does is super.onCreate(), then
+          # the original BannerHub bootstrap. Insert an eager call to
+          # BannerHubLocalServer.startIfNotRunning() between them so the server
+          # is up before ANY other code runs (including offline-gated paths
+          # that would otherwise prevent EggGameHttpConfig.<clinit> from firing).
+          # Reflection avoids adding a new class ref to smali_classes8.
+          old = (
+              '    invoke-super {p0}, Landroid/app/Application;->onCreate()V\n'
+              '\n'
+              '    .line 4\n'
+          )
+          new = (
+              '    invoke-super {p0}, Landroid/app/Application;->onCreate()V\n'
+              '\n'
+              '    # BannerHub Nano Offline: eager-start embedded NanoHttpd before\n'
+              '    # any network-gated code suppresses HTTP. Reflection avoids\n'
+              '    # adding a new type ref to smali_classes8.\n'
+              '    :try_start_bn_eager\n'
+              '    const-string v0, "app.revanced.extension.gamehub.server.BannerHubLocalServer"\n'
+              '    invoke-static {v0}, Ljava/lang/Class;->forName(Ljava/lang/String;)Ljava/lang/Class;\n'
+              '    move-result-object v0\n'
+              '    const-string v1, "startIfNotRunning"\n'
+              '    const/4 v2, 0x0\n'
+              '    new-array v3, v2, [Ljava/lang/Class;\n'
+              '    invoke-virtual {v0, v1, v3}, Ljava/lang/Class;->getMethod(Ljava/lang/String;[Ljava/lang/Class;)Ljava/lang/reflect/Method;\n'
+              '    move-result-object v0\n'
+              '    const/4 v1, 0x0\n'
+              '    new-array v2, v2, [Ljava/lang/Object;\n'
+              '    invoke-virtual {v0, v1, v2}, Ljava/lang/reflect/Method;->invoke(Ljava/lang/Object;[Ljava/lang/Object;)Ljava/lang/Object;\n'
+              '    :try_end_bn_eager\n'
+              '    .catch Ljava/lang/Throwable; {:try_start_bn_eager .. :try_end_bn_eager} :catch_bn_eager\n'
+              '    goto :goto_bn_after_eager\n'
+              '    :catch_bn_eager\n'
+              '    move-exception v0\n'
+              '    :goto_bn_after_eager\n'
+              '\n'
+              '    .line 4\n'
+          )
+          if old not in content:
+              print("ERROR: anchor not found in App.smali (super.onCreate + .line 4)")
+              sys.exit(1)
+          open(path, 'w', encoding='utf-8').write(content.replace(old, new, 1))
+          print("App.onCreate: eager-start of BannerHubLocalServer injected.")
+          PYEOF
+
       - name: Patch EggGameHttpConfig — redirect base URL to embedded NanoHttpd
         run: |
           python3 << 'PYEOF'
