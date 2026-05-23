@@ -897,7 +897,8 @@ jobs:
           python3 scripts/prepare_local_mirror.py \
             --src /tmp/bannerhub-api \
             --dst apktool_out/assets/local-mirror \
-            --base-url http://127.0.0.1:51823
+            --base-url http://127.0.0.1:51823 \
+            --overrides-dir data/local-mirror-overrides
 
       - name: Install network security config (cleartext to 127.0.0.1 only)
         run: |

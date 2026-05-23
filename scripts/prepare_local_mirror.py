@@ -9,6 +9,7 @@ Usage:
     prepare_local_mirror.py --src <bannerhub-api dir> --dst <apktool_out_base/assets/local-mirror>
                             [--base-url http://127.0.0.1:8765]
                             [--cdn-prefix components-cdn]
+                            [--overrides-dir <repo>/data/local-mirror-overrides]
 
 The script copies the following subtrees verbatim and rewrites their JSON content:
     <src>/components/  -> <dst>/components/
@@ -21,6 +22,11 @@ Missing source subdirs are skipped silently.
 The URL rewrite is a plain string replacement:
     https://github.com/The412Banner/bannerhub-api/releases/download/Components/
         -> <base-url>/<cdn-prefix>/
+
+Overrides (--overrides-dir): after upstream is copied + rewritten, every file
+under <overrides-dir> is copied on top of <dst> verbatim (no URL rewrite,
+preserves binary content). Use this for response-shape fixes and bundled CDN
+assets that upstream doesn't ship in the static repo.
 """
 
 import argparse
@@ -65,6 +71,11 @@ def parse_args() -> argparse.Namespace:
         "--cdn-prefix",
         default="components-cdn",
         help="Path segment served by LocalCdnServer",
+    )
+    p.add_argument(
+        "--overrides-dir",
+        default=None,
+        help="Directory whose contents are copied on top of <dst> verbatim, after upstream + URL rewrite",
     )
     return p.parse_args()
 
@@ -136,8 +147,17 @@ def main() -> int:
         total_rewrites += rewrites_here
         print(f"  copy   {subtree}/  files={copied}  rewrites={rewrites_here}")
 
+    overrides_applied = 0
+    if args.overrides_dir:
+        overrides = os.path.abspath(args.overrides_dir)
+        if not os.path.isdir(overrides):
+            print(f"  skip   overrides ({overrides} does not exist)")
+        else:
+            overrides_applied = copytree_overwrite(overrides, dst)
+            print(f"  apply  overrides/  files={overrides_applied}  (from {overrides})")
+
     print()
-    print(f"DONE. files={total_files} rewrites={total_rewrites}")
+    print(f"DONE. upstream_files={total_files} rewrites={total_rewrites} overrides={overrides_applied}")
     return 0
 
 
