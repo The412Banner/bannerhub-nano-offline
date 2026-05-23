@@ -807,131 +807,14 @@
 .end method
 
 .method public static getEffectiveApiUrl(Ljava/lang/String;)Ljava/lang/String;
-    .locals 7
+    .locals 0
 
-    .line 204
-    const-string v0, "last_api_source"
+    # BannerHub Nano Offline: lazy-start embedded NanoHttpd, return localhost base URL.
+    # Replaces the original 5.x/EmuReady/BannerHub branching with a single offline endpoint.
+    invoke-static {}, Lapp/revanced/extension/gamehub/server/BannerHubLocalServer;->startIfNotRunning()V
 
-    .line 0
-    const-string v1, "API source mismatch on startup (current="
+    const-string p0, "http://127.0.0.1:8765/"
 
-    .line 204
-    sget-boolean v2, Lapp/revanced/extension/gamehub/prefs/GameHubPrefs;->startupCheckDone:Z
-
-    if-nez v2, :cond_1
-
-    const/4 v2, 0x1
-
-    .line 205
-    sput-boolean v2, Lapp/revanced/extension/gamehub/prefs/GameHubPrefs;->startupCheckDone:Z
-
-    .line 207
-    :try_start_0
-    invoke-static {}, Lapp/revanced/extension/gamehub/prefs/GameHubPrefs;->getPrefs()Landroid/content/SharedPreferences;
-
-    move-result-object v3
-
-    .line 208
-    invoke-static {}, Lapp/revanced/extension/gamehub/prefs/GameHubPrefs;->getApiSource()I
-
-    move-result v4
-
-    .line 210
-    const/4 v2, -0x1
-    invoke-interface {v3, v0, v2}, Landroid/content/SharedPreferences;->getInt(Ljava/lang/String;I)I
-
-    move-result v2
-
-    .line 211
-    invoke-interface {v3, v0}, Landroid/content/SharedPreferences;->contains(Ljava/lang/String;)Z
-
-    move-result v5
-
-    if-eqz v5, :cond_0
-
-    if-eq v4, v2, :cond_1
-
-    .line 212
-    :cond_0
-    sget-object v5, Lapp/revanced/extension/gamehub/util/GHLog;->PREFS:Lapp/revanced/extension/gamehub/util/GHLog;
-
-    new-instance v6, Ljava/lang/StringBuilder;
-
-    invoke-direct {v6, v1}, Ljava/lang/StringBuilder;-><init>(Ljava/lang/String;)V
-
-    invoke-virtual {v6, v4}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
-
-    move-result-object v1
-
-    const-string v6, ", last="
-
-    invoke-virtual {v1, v6}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
-
-    move-result-object v1
-
-    invoke-virtual {v1, v2}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
-
-    move-result-object v1
-
-    const-string v2, ") \u2014 clearing caches"
-
-    invoke-virtual {v1, v2}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
-
-    move-result-object v1
-
-    invoke-virtual {v1}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
-
-    move-result-object v1
-
-    invoke-virtual {v5, v1}, Lapp/revanced/extension/gamehub/util/GHLog;->d(Ljava/lang/String;)V
-
-    .line 214
-    invoke-static {}, Lapp/revanced/extension/gamehub/prefs/GameHubPrefs;->clearComponentAndTokenCaches()V
-
-    .line 215
-    invoke-interface {v3}, Landroid/content/SharedPreferences;->edit()Landroid/content/SharedPreferences$Editor;
-
-    move-result-object v1
-
-    invoke-interface {v1, v0, v4}, Landroid/content/SharedPreferences$Editor;->putInt(Ljava/lang/String;I)Landroid/content/SharedPreferences$Editor;
-
-    move-result-object v0
-
-    invoke-interface {v0}, Landroid/content/SharedPreferences$Editor;->apply()V
-    :try_end_0
-    .catch Ljava/lang/Exception; {:try_start_0 .. :try_end_0} :catch_0
-
-    goto :goto_0
-
-    :catch_0
-    move-exception v0
-
-    .line 218
-    sget-object v1, Lapp/revanced/extension/gamehub/util/GHLog;->PREFS:Lapp/revanced/extension/gamehub/util/GHLog;
-
-    const-string v2, "Startup API source check failed"
-
-    invoke-virtual {v1, v2, v0}, Lapp/revanced/extension/gamehub/util/GHLog;->w(Ljava/lang/String;Ljava/lang/Throwable;)V
-
-    .line 221
-    :cond_1
-    :goto_0
-    invoke-static {}, Lapp/revanced/extension/gamehub/prefs/GameHubPrefs;->getApiSource()I
-
-    move-result v0
-
-    if-eqz v0, :cond_url_gamehub
-
-    const/4 v1, 0x1
-    if-ne v0, v1, :cond_url_bannerhub
-
-    const-string p0, "https://gamehub-lite-api.emuready.workers.dev/"
-    goto :cond_url_gamehub
-
-    :cond_url_bannerhub
-    const-string p0, "https://bannerhub-api.the412banner.workers.dev/"
-
-    :cond_url_gamehub
     return-object p0
 .end method
 

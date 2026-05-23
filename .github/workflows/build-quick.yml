@@ -804,10 +804,31 @@ jobs:
           print("GameDetailActivity auto-launch finish patch applied.")
           PYEOF
 
-      - name: Patch package name for pre/beta (isolate from stable installs)
+      - name: Bundle local API mirror (NanoHttpd offline)
         run: |
-          sed -i "s/gamehub\.lite/com.tencent.ig/g" apktool_out/AndroidManifest.xml
-          sed -i 's/android:label="GameHub Revanced"/android:label="BannerHub PuBG"/' apktool_out/AndroidManifest.xml
+          # Pull bannerhub-api's pre-generated static catalog (components/ + simulator/)
+          git clone --depth=1 https://github.com/The412Banner/bannerhub-api.git /tmp/bannerhub-api
+          mkdir -p apktool_out/assets/local-mirror
+          python3 scripts/prepare_local_mirror.py \
+            --src /tmp/bannerhub-api \
+            --dst apktool_out/assets/local-mirror \
+            --base-url http://127.0.0.1:8765
+
+      - name: Install network security config (cleartext to 127.0.0.1 only)
+        run: |
+          mkdir -p apktool_out/res/xml
+          cp scripts/network_security_config.xml apktool_out/res/xml/network_security_config.xml
+          # Replace any existing attribute, then add ours to <application>
+          sed -i 's| android:networkSecurityConfig="[^"]*"||g' apktool_out/AndroidManifest.xml
+          sed -i 's|<application |<application android:networkSecurityConfig="@xml/network_security_config" |' apktool_out/AndroidManifest.xml
+          echo "AndroidManifest <application> after patch:"
+          grep -o '<application [^>]*' apktool_out/AndroidManifest.xml | head -1
+
+      - name: Patch package name and label for offline-nano
+        run: |
+          # Unique package so this app coexists with BannerHub variants on the same device.
+          sed -i "s/gamehub\.lite/banner.nano.offline/g" apktool_out/AndroidManifest.xml
+          sed -i 's/android:label="GameHub Revanced"/android:label="BannerHub Nano Offline"/' apktool_out/AndroidManifest.xml
 
       - name: Rebuild and Sign (Normal variant only)
         run: |
@@ -819,13 +840,20 @@ jobs:
           # Inject original classes12.dex (skipped smali reassembly due to dex index limit)
           zip rebuilt-unsigned.apk classes12.dex
 
-          # Compile and inject GOG extension dex as classes18.dex
+          # Compile and inject extension dex (incl. NanoHttpd offline server) as classes18.dex
           ANDROID_JAR=$(ls $ANDROID_SDK_ROOT/platforms/android-*/android.jar 2>/dev/null | sort -V | tail -1)
+          NANOHTTPD_JAR=extension/server/lib/nanohttpd-2.3.1.jar
           mkdir -p ext_classes
-          javac -source 8 -target 8 -cp "$ANDROID_JAR" -d ext_classes extension/*.java
+          javac -source 8 -target 8 \
+            -cp "$ANDROID_JAR:$NANOHTTPD_JAR" \
+            -d ext_classes \
+            $(find extension -name '*.java')
           BUILD_TOOLS=$(ls $ANDROID_SDK_ROOT/build-tools | sort -V | tail -1)
           mkdir -p ext_dex
-          $ANDROID_SDK_ROOT/build-tools/$BUILD_TOOLS/d8 --release --min-api 26 --output ext_dex $(find ext_classes -name "*.class")
+          $ANDROID_SDK_ROOT/build-tools/$BUILD_TOOLS/d8 \
+            --release --min-api 26 --output ext_dex \
+            "$NANOHTTPD_JAR" \
+            $(find ext_classes -name "*.class")
           cp ext_dex/classes.dex classes18.dex
           zip -j rebuilt-unsigned.apk classes18.dex
 
@@ -838,7 +866,7 @@ jobs:
           # in the YAML expression itself.
           SAFE_REF="${GITHUB_REF_NAME//\//-}"
           echo "SAFE_REF=$SAFE_REF" >> "$GITHUB_ENV"
-          APK_NAME="BannerHub-${SAFE_REF}-Normal.apk"
+          APK_NAME="BannerHub-Nano-Offline-${SAFE_REF}-Normal.apk"
           ${ANDROID_SDK_ROOT}/build-tools/$(ls ${ANDROID_SDK_ROOT}/build-tools | tail -1)/apksigner sign \
             --key testkey.pk8 \
             --cert testkey.x509.pem \
