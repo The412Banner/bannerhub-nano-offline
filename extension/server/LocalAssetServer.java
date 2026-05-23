@@ -43,6 +43,20 @@ final class LocalAssetServer {
         }
     }
 
+    /** Read a normalized asset path as a UTF-8 string. Used by routes that need to
+     *  transform the asset payload before responding (e.g. type-filter on
+     *  getComponentList). Returns null on missing/invalid path. */
+    String readAsString(String path) {
+        String clean = normalize(path);
+        if (clean == null) return null;
+        try (InputStream in = ctx.getAssets().open(ASSET_ROOT + "/" + clean)) {
+            return new String(readAll(in), "UTF-8");
+        } catch (IOException e) {
+            Log.d(TAG, "404 (readAsString) " + clean);
+            return null;
+        }
+    }
+
     /** Strip leading slash, drop query string, reject traversal. */
     private static String normalize(String path) {
         if (path == null) return null;

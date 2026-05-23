@@ -6,7 +6,9 @@ import android.util.Log;
 
 import java.io.IOException;
 import java.util.HashMap;
+import java.util.Map;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import fi.iki.elonen.NanoHTTPD;
@@ -132,11 +134,101 @@ public final class BannerHubLocalServer extends NanoHTTPD {
                 return cdnServer.serve(
                         path.substring("/components-cdn/".length()), rangeHeader);
             }
+            // /simulator/v2/getComponentList: the bannerhub-api Worker filters
+            // this catalog by a `type` param sent per picker tab (1=translator,
+            // 2=GPU driver, 3=DXVK, 4=VKD3D, 5=Wine, 6=deps, 7=Steam). The 5.x
+            // client (BannerHub v3.7.5) submits it as form-urlencoded POST body
+            // or query string. Without server-side filtering, every picker
+            // category shows the full union catalog — the type-bleed bug.
+            // Mirrors Worker bannerhub-worker.js:823 (5.x branch, no reshape).
+            if ("/simulator/v2/getComponentList".equals(path)) {
+                Integer type = parseTypeFilter(session, bodyFiles.get("postData"));
+                return serveComponentListFiltered(type);
+            }
             return assetServer.serve(path);
         } catch (Throwable t) {
             Log.e(TAG, "Handler error for " + path, t);
             return newFixedLengthResponse(Response.Status.INTERNAL_ERROR,
                     "text/plain", "internal error");
+        }
+    }
+
+    /** Extract the `type` filter for getComponentList. Lookup order matches the
+     *  bannerhub-worker.js parsing (JSON body > form-urlencoded body > query
+     *  string). NanoHTTPD merges form-urlencoded body params + URL query string
+     *  into session.getParms() after parseBody(), so a single getParms() lookup
+     *  covers both. Returns null if absent/blank/non-integer. */
+    static Integer parseTypeFilter(IHTTPSession session, String jsonBody) {
+        if (jsonBody != null && !jsonBody.isEmpty()) {
+            try {
+                JSONObject o = new JSONObject(jsonBody);
+                if (o.has("type") && !o.isNull("type")) {
+                    return o.optInt("type");
+                }
+            } catch (Throwable ignored) {
+                // body wasn't JSON — fall through to params
+            }
+        }
+        Map<String, String> p = session.getParms();
+        if (p != null) {
+            String v = p.get("type");
+            if (v != null && !v.isEmpty()) {
+                try {
+                    return Integer.valueOf(v.trim());
+                } catch (NumberFormatException ignored) {
+                    // ignored
+                }
+            }
+        }
+        return null;
+    }
+
+    /** Serve /simulator/v2/getComponentList, filtering data.list by type.
+     *  5.x shape: data.list is a STRINGIFIED JSON array; preserved on the way
+     *  out. If type is null or the catalog is malformed, returns the static
+     *  catalog unchanged. */
+    private Response serveComponentListFiltered(Integer type) {
+        String raw = assetServer.readAsString("simulator/v2/getComponentList");
+        if (raw == null) {
+            return newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "");
+        }
+        if (type == null) {
+            return newFixedLengthResponse(Response.Status.OK,
+                    "application/json; charset=utf-8", raw);
+        }
+        try {
+            JSONObject envelope = new JSONObject(raw);
+            JSONObject data = envelope.optJSONObject("data");
+            if (data == null) {
+                return newFixedLengthResponse(Response.Status.OK,
+                        "application/json; charset=utf-8", raw);
+            }
+            Object listField = data.opt("list");
+            JSONArray arr;
+            if (listField instanceof String) {
+                arr = new JSONArray((String) listField);
+            } else if (listField instanceof JSONArray) {
+                arr = (JSONArray) listField;
+            } else {
+                arr = new JSONArray();
+            }
+            JSONArray filtered = new JSONArray();
+            for (int i = 0; i < arr.length(); i++) {
+                JSONObject entry = arr.optJSONObject(i);
+                if (entry != null && entry.optInt("type", -1) == type) {
+                    filtered.put(entry);
+                }
+            }
+            data.put("list", filtered.toString());
+            data.put("total", filtered.length());
+            envelope.put("data", data);
+            Log.i(TAG, "getComponentList type=" + type + " -> " + filtered.length() + " entries");
+            return newFixedLengthResponse(Response.Status.OK,
+                    "application/json; charset=utf-8", envelope.toString());
+        } catch (Throwable t) {
+            Log.e(TAG, "type filter failed; passthrough", t);
+            return newFixedLengthResponse(Response.Status.OK,
+                    "application/json; charset=utf-8", raw);
         }
     }
 
