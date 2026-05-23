@@ -118,3 +118,26 @@ Other callers of `getEffectiveApiUrl` (ADB wifi HttpConfig in smali_classes9, Ga
 If smali_classes13 also overflows, fallback: use `Class.forName` reflection from EggGameHttpConfig (no new type ref).
 
 ---
+
+## 2026-05-23 — Fix #1 pushed (`df70904`): chokepoint relocated to smali_classes13
+
+- Reverted `patches/smali_classes6/.../GameHubPrefs.smali` to original (via `git checkout 2d2052e -- <path>`)
+- Added inline build.yml + build-quick.yml step "Patch EggGameHttpConfig — redirect base URL to embedded NanoHttpd" that replaces the `:goto_0 / invoke-static getEffectiveApiUrl / move-result-object v0 / sput-object` block with `:goto_0 / invoke-static BannerHubLocalServer.startIfNotRunning / const-string "http://127.0.0.1:8765/" / sput-object`. The new BannerHubLocalServer ref lands in smali_classes13 instead of saturated smali_classes6.
+- Triggered build #2 (run `26333717521`).
+
+## 2026-05-23 — Build #2 RED: Java compile failure (NanoHTTPD.Method shadow)
+
+dex64K fix WORKED — `Smaling smali_classes13 folder into classes13.dex...` passed cleanly. But javac then failed:
+
+```
+extension/server/BannerHubLocalServer.java:59: error: incompatible types:
+  java.lang.reflect.Method cannot be converted to fi.iki.elonen.NanoHTTPD.Method
+```
+
+Root cause: inside `BannerHubLocalServer extends NanoHTTPD`, the bare name `Method` resolves to the inherited inner enum `NanoHTTPD.Method` (HTTP verbs), shadowing `import java.lang.reflect.Method`. The reflection call in `resolveAppContext()` (`Method m = at.getMethod(...)`) typechecks the wrong way.
+
+## 2026-05-23 — Fix #2 pushed (`62858d8`): fully qualified java.lang.reflect.Method
+
+Dropped the `import java.lang.reflect.Method` and wrote the type out as `java.lang.reflect.Method` in the one usage site. Added a comment explaining the shadow gotcha for the next reader. Triggered build #3 (run `26333819184`).
+
+---
