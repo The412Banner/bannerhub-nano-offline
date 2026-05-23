@@ -127,7 +127,10 @@ public final class BannerHubLocalServer extends NanoHTTPD {
         }
         try {
             if (path.startsWith("/components-cdn/")) {
-                return cdnServer.serve(path.substring("/components-cdn/".length()));
+                String rangeHeader = session.getHeaders() != null
+                        ? session.getHeaders().get("range") : null;
+                return cdnServer.serve(
+                        path.substring("/components-cdn/".length()), rangeHeader);
             }
             return assetServer.serve(path);
         } catch (Throwable t) {
