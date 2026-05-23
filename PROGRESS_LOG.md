@@ -215,3 +215,17 @@ Switched to **51823** (IANA dynamic/private range 49152-65535, no registered ser
 If 51823 is also taken on some other user's device, NanoHttpd will fail silently the same way. Robust fix (deferred): on bind failure, try 51824-51833, store the chosen port in a static field, have the smali patch read it via reflection. For MVP, 51823 in the dynamic range should be safe on essentially every device.
 
 ---
+
+## 2026-05-23 — Build #4 GREEN ✓ — port-fix APK ready
+
+Run `26334250908` succeeded in 4m5s. Replacement APK at
+`~/bannerhub-nano-offline-builds/BannerHub-pre-main/BannerHub-Nano-Offline-main-Normal.apk`.
+
+End-to-end verified post-build:
+- `classes13.dex` contains literal string `http://127.0.0.1:51823/` (the EggGameHttpConfig OkHttp base URL constant)
+- `assets/local-mirror/components/box64_manifest` `download_url` fields = `http://127.0.0.1:51823/components-cdn/<file>.tzst` (rewritten by prepare_local_mirror.py at build time)
+- No leftover `127.0.0.1:8765` references anywhere in the APK
+
+User to uninstall the previous build, reinstall this APK, relaunch. Expected: dashboard renders Steam tab + Windows PC import icon now that NanoHttpd actually binds. If not, next diagnostic is fresh `getlog -p banner.nano.offline` against the offline-nano package.
+
+---
