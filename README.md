@@ -14,6 +14,11 @@
   <a href="https://github.com/The412Banner/bannerhub-nano-offline/releases/latest"><strong>📥 Latest release</strong></a>
 </p>
 
+> [!WARNING]
+> **THIS IS NOT AN UPDATE TO ANY OF THE BANNERHUB PROJECTS!**
+> Simply made and released for internet/Wi-Fi restricted users who have been asking for a truly 100% offline build.
+> The main BannerHub line (BannerHub, BannerHub-Lite, BannerHub-ReVanced) is unaffected — those continue on their own release schedule.
+
 **A fully offline build of [BannerHub](https://github.com/The412Banner/BannerHub) v3.7.5.** Ships with an embedded HTTP server (NanoHttpd) that mirrors the static-route output of the bannerhub-api Cloudflare Worker locally on `127.0.0.1`. The app never reaches the network for its core install / launch flow — everything is served from inside the APK.
 
 Install the APK, add your `.wcp` components via the in-app Component Manager, add a game, launch. No internet required.
