@@ -4,6 +4,8 @@ import android.content.Context;
 import android.content.res.AssetManager;
 import android.util.Log;
 
+import app.revanced.extension.gamehub.server.BannerHubLocalServer;
+
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -127,7 +129,16 @@ public final class ContainerLibrary {
                     return;
                 }
             }
-            arr.put(c.toJson());
+            JSONObject entry = c.toJson();
+            // The downloaded archives now live in files/local-mirror/components-cdn/
+            // which LocalCdnServer serves first. Rewrite the catalog URLs so the
+            // app's install/mount path reads from the local server instead of
+            // re-fetching from github. (logo is left as-is — cosmetic; we don't
+            // bundle/download the logo PNGs.)
+            entry.put("download_url", localCdnUrl(c.fileName));
+            JSONObject sub = entry.optJSONObject("sub_data");
+            if (sub != null) sub.put("sub_download_url", localCdnUrl(c.subFileName));
+            arr.put(entry);
             envelope.put("data", arr);
         } catch (IOException ioe) {
             throw ioe;
@@ -151,6 +162,14 @@ public final class ContainerLibrary {
      *  handles that). */
     public static File cdnFile(Context ctx, String filename) {
         return new File(ctx.getFilesDir(), CDN_DIR + "/" + filename);
+    }
+
+    /** Local-server URL for a file under files/local-mirror/components-cdn/.
+     *  Matches the rewrite prepare_local_mirror.py applies to every other
+     *  catalog at bake time, so post-download entries look identical to
+     *  pre-baked ones. */
+    private static String localCdnUrl(String filename) {
+        return "http://127.0.0.1:" + BannerHubLocalServer.PORT + "/components-cdn/" + filename;
     }
 
     /** Ensure the writable catalog exists, lazy-copying from the asset on
