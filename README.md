@@ -32,14 +32,14 @@ Install the APK, add your `.wcp` components via the in-app Component Manager, ad
 
 ## What does not work offline
 
-These features need internet by design and will fail gracefully:
+These features need internet by design and will fail gracefully in airplane mode. With an internet connection they work as they do in upstream BannerHub:
 
-- ⚠️ Compatibility Layers initial download (one-time online fetch per non-bundled layer; the bytes are then served locally forever)
-- ❌ GOG Games / Epic Games / Amazon Games store login + downloads (OAuth + CDN)
-- ❌ Community game configs browser (settings sharing)
-- ❌ Steam library augmentation (Steam Community feed)
-- ❌ App self-update check
-- ❌ Token refresh / online game search
+- ⚠️ **Internet required** — Compatibility Layers initial download (one-time online fetch per non-bundled layer; the bytes are then served locally forever)
+- ❌ **Internet required** — GOG Games / Epic Games / Amazon Games store login + downloads (OAuth + CDN)
+- ❌ **Internet required** — Community game configs browser (settings sharing)
+- ❌ **Internet required** — Steam library augmentation (Steam Community feed)
+- ❌ **Internet required** — App self-update check
+- ❌ **Internet required** — Token refresh / online game search
 
 ## How it works
 
