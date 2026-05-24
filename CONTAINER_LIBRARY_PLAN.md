@@ -1,5 +1,27 @@
 # Container Library — Implementation Plan
 
+## Status
+
+- **Branch:** `feature/compatibility-layers` (pushed to origin)
+- **Last completed:** Plan committed (`e5654fc`) + branch pushed (2026-05-23)
+- **Next up:** Phase 0.4 (cache check) → Phase 0.1–0.3 (writable-catalog extraction)
+- **Phases complete:** none yet (Phase 0–6 all pending)
+
+| Phase                          | Jobs done | Total | Status      |
+| ------------------------------ | --------- | ----- | ----------- |
+| 0 — Writable catalogs          | 0         | 4     | not started |
+| 1 — known-containers.json      | 0         | 2     | not started |
+| 2 — Backend (ContainerLibrary) | 0         | 4     | not started |
+| 3 — UI Activity                | 0         | 5     | not started |
+| 4 — CI + asset wiring          | 0         | 3     | not started |
+| 5 — Device test                | 0         | 1     | not started |
+| 6 — v0.2 release (gated)       | 0         | 5     | not started |
+
+After every job: tick the inline checkbox below, bump the Jobs-done counter in this table, append to `~/BANNERHUB_OFFLINE_NANO_PROGRESS_LOG.md`, and update memory ([[project_bannerhub_offline_nano]]). After every phase: also flip the "Status" column for that phase.
+
+---
+
+
 In-app "Compatibility Layers" screen that lets users download additional Wine/Proton containers from `bannerhub-api` GH Releases at runtime. Add-only, containers/compat-layers only (no components). Downloaded containers persist in `/data/data/banner.nano.offline/files/components-cdn/` and are served to the rest of the app via the existing embedded NanoHTTPD server. After a one-time online download, each container works fully offline forever.
 
 ## Architecture summary
