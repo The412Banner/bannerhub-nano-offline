@@ -87,7 +87,39 @@ The three single largest files account for **~400 MB**:
 
 Everything else in `components-cdn/` is the curated component set: 5 translators (Box64 / FEX), 8 DXVK variants, 5 VKD3D variants, 6 GPU drivers, the firmware/Wine deps. Each is small individually (~5–15 MB) but BannerHub's per-category pickers need a representative subset bundled or the picker shows nothing in airplane mode.
 
-If you grab additional compatibility layers via the v0.2 Compatibility Layers screen, they download to `/data/data/banner.nano.offline/files/local-mirror/components-cdn/` (~150–220 MB each) — those live outside the APK, so the APK file itself stays at the size shown on the release page no matter how many layers you've added.
+### Why isn't everything bundled?
+
+Upstream `bannerhub-api` carries ~548 component entries — every version of every component BannerHub has ever shipped. We keep a curated subset per category (defined in [`data/bundled-components.json`](data/bundled-components.json)) so the APK stays installable and the in-app pickers stay usable. The v0.2 build's actual trim, straight from CI:
+
+| Manifest             | Kept | Dropped | Bundled bytes |
+|----------------------|-----:|--------:|--------------:|
+| box64 (translators)  | 5    | 31      | 23 MB |
+| dxvk                 | 8    | 39      | 64 MB |
+| vkd3d                | 5    | 2       | 16 MB |
+| drivers (GPU)        | 6    | 267     | 47 MB |
+| steam                | 0    | 3       | 0 MB |
+| libraries            | 117  | 0       | 0.7 MB |
+| games (configs)      | 42   | 23      | 84 MB *(base.tzst is 79 MB of this)* |
+| containers (wineprefixes) | 1 | 9 *(now downloadable via UI)* | 161 MB |
+| imagefs (firmware)   | 1 (v1.4.1) | several older | 164 MB |
+| **Total**            | **186 files** | **365 components + 9 containers + older firmwares** | **560 MB** |
+
+Bundling everything would push the APK to roughly **5.5–6 GB**:
+
+| Slice                                       | v0.2     | Full-fat estimate |
+|---------------------------------------------|---------:|------------------:|
+| GPU drivers (267 dropped × ~8 MB)           | 47 MB    | ~2.1 GB |
+| DXVK (39 dropped × ~8 MB)                   | 64 MB    | ~380 MB |
+| Box64/FEX (31 dropped × ~5 MB)              | 23 MB    | ~170 MB |
+| Other components                            | ~140 MB  | ~180 MB |
+| Containers (9 extra @ 150–250 MB each)      | 161 MB   | ~1.9 GB |
+| Imagefs (firmware 1.3.x, 1.4.0, …)          | 164 MB   | ~0.8–1.5 GB |
+| App code + native libs + resources          | ~160 MB  | ~160 MB |
+| **APK total**                               | **703 MB** | **~5.5–6 GB** |
+
+Two practical ceilings hit before the math matters: GitHub release assets cap at **2 GB per file**, and Android's installer/Play limits are a separate constraint. So a full-fat APK can't ship as a single download — curation isn't a stylistic choice.
+
+The v0.2 **Compatibility Layers** screen is the escape hatch for the largest slice: bundle one Proton wineprefix, let users pull additional layers on demand. Downloaded layers land in `/data/data/banner.nano.offline/files/local-mirror/components-cdn/` (~150–220 MB each) and are served by the embedded `127.0.0.1` server forever after — so the APK file itself stays at the release-page size no matter how many layers you've added.
 
 ## Installation
 
