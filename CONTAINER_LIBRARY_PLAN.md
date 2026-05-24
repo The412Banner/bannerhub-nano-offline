@@ -3,15 +3,15 @@
 ## Status
 
 - **Branch:** `feature/compatibility-layers` (pushed to origin)
-- **Last completed:** Phase 1 — `known-containers.json` baked into APK assets (both build workflows)
-- **Next up:** Phase 2.1 — `ContainerInfo` POJO + `State` enum
-- **Phases complete:** Phase 0 ✅, Phase 1 ✅ (Phase 2–6 pending)
+- **Last completed:** Phase 2 — backend (ContainerInfo + ContainerLibrary + ContainerDownloader + ProgressListener) — compiles clean
+- **Next up:** Phase 3.1 — read `HomeLeftMenuDialog.smali` rows 1583+ and 3924+ to lift Epic/GOG/Amazon injection pattern
+- **Phases complete:** Phase 0 ✅, Phase 1 ✅, Phase 2 ✅ (Phase 3–6 pending)
 
 | Phase                          | Jobs done | Total | Status      |
 | ------------------------------ | --------- | ----- | ----------- |
 | 0 — Writable catalogs          | 3         | 3     | ✅ complete |
 | 1 — known-containers.json      | 2         | 2     | ✅ complete |
-| 2 — Backend (ContainerLibrary) | 0         | 4     | not started |
+| 2 — Backend (ContainerLibrary) | 4         | 4     | ✅ complete |
 | 3 — UI Activity                | 0         | 5     | not started |
 | 4 — CI + asset wiring          | 0         | 3     | not started |
 | 5 — Device test                | 0         | 1     | not started |
@@ -131,22 +131,33 @@ Pure Java in `extension/server/`. No Android UI dependencies; testable in isolat
 
 ### Jobs
 
-- [ ] **2.1** `ContainerInfo.java` POJO — mirrors known-containers.json entry shape + computed `State` enum (BUNDLED / INSTALLED / NOT_INSTALLED) + `installedSizeBytes` (set when INSTALLED)
-- [ ] **2.2** `ContainerLibrary.java`
-  - `List<ContainerInfo> listAll(Context)` — merges known-containers asset with the bundled `getContainerList.json` and per-id presence check in `files/components-cdn/`
-    - BUNDLED = present in shipped `getContainerList.json` (currently only id 10)
-    - INSTALLED = wine archive AND sub_data exist in `files/components-cdn/`
-    - NOT_INSTALLED = neither bundled nor installed
-  - `void addToCatalog(Context, ContainerInfo)` — reads writable `getContainerList.json`, appends entry, writes back (atomic via .tmp + rename)
-  - `boolean isInstalled(Context, int id)` — file existence check
-  - `void deleteInstalled(Context, int id)` — NOT IMPLEMENTED (add-only per scope)
-- [ ] **2.3** `ContainerDownloader.java`
-  - `download(ContainerInfo, ProgressListener)` — sequential: wine archive then sub_data
-  - Uses `HttpURLConnection` (bypasses our patched OkHttp interceptors + Aria — keeps connectivity-lie patches purely for the game-launch path)
-  - Atomic: download to `<name>.tar.zst.tmp` then rename
-  - MD5 verify wine archive against `file_md5` (catches corrupt CDN); skip MD5 check on sub_data (per the well-documented [[project_bannerhub_api_proton_x64_subdata_fix]] steamuser/xuser md5-shape quirk — sub_file_md5 is what the app's install-time strict-check uses, not a binary checksum)
-  - On any failure (network, MD5 mismatch, disk full): clean up partial files, return error
-- [ ] **2.4** `ProgressListener` interface — `onProgress(long bytesDone, long bytesTotal, String filename)`, `onComplete()`, `onError(String reason)`
+- [x] **2.1** `ContainerInfo.java` POJO + State enum — **DONE 2026-05-23**
+  - All 17 fields mirror known-containers.json entry shape
+  - `State` enum: BUNDLED / INSTALLED / NOT_INSTALLED
+  - `static ContainerInfo fromJson(JSONObject)` — parses known-containers OR getContainerList list element
+  - `JSONObject toJson()` — serializes to exact getContainerList data.list element shape (round-trip safe)
+  - `String sizeLabel()` — human-readable bytes (only wine archive; sub_data is ~10 MB rounding error)
+  - `String badge()` — "X64 · proton" / "arm64X · stable" for row UI
+- [x] **2.2** `ContainerLibrary.java` — **DONE 2026-05-23**
+  - `static List<ContainerInfo> listAll(Context)` — merges bundled asset (BUNDLED only) + known-containers asset (state-stamped via file presence) into a deduped list (LinkedHashMap by id; bundled wins collisions)
+  - `static boolean isInstalled(Context, ContainerInfo)` — both archives exist in files/local-mirror/components-cdn/
+  - `static synchronized void addToCatalog(Context, ContainerInfo)` — lazy-copies bundled asset to writable mirror on first call (atomic via .bootstrap.tmp + rename to dodge concurrent server reads), parses envelope (handles both stringified-array and bare-array shapes), appends entry, re-serializes preserving original shape, atomic .tmp + rename. Idempotent on duplicate ids.
+  - `static File cdnFile(Context, String)` — helper for downloader to compute archive destination paths
+- [x] **2.3** `ContainerDownloader.java` — **DONE 2026-05-23**
+  - `boolean download(ContainerInfo, ProgressListener)` — sequential: wine archive → MD5 verify → sub_data → atomic renames → addToCatalog
+  - Raw HttpURLConnection (bypasses patched OkHttp + Aria)
+  - Connect/read timeouts 15s/30s, 64 KB buffer
+  - MD5 only on wine archive (per [[project_bannerhub_api_proton_x64_subdata_fix]] sub_data quirk)
+  - Atomic rename on success; rollback (delete) on later failure so listAll always sees a consistent state
+  - `void cancel()` — cooperatively cancels mid-stream read
+- [x] **2.4** `ProgressListener` interface — **DONE 2026-05-23**
+  - `onPhase(String)` — "Downloading wine binaries", "Verifying MD5", "Downloading wineprefix", "Updating catalog"
+  - `onProgress(long bytesDone, long bytesTotal, String filename)`
+  - `onComplete(ContainerInfo)`
+  - `onError(String reason)`
+  - Comments document threading expectations (caller's thread; UI must marshal)
+
+**Local compile check:** `javac -source 8 -target 8 -cp android.jar:nanohttpd.jar extension/Container*.java extension/ProgressListener.java` → clean (only a deprecation note for an HttpURLConnection-adjacent API, harmless).
 
 ### Acceptance
 
