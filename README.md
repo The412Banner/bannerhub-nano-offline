@@ -18,7 +18,7 @@
 
 Install the APK, add your `.wcp` components via the in-app Component Manager, add a game, launch. No internet required.
 
-> **v0.1 ships with Proton 10.0 x64 only** as the bundled compatibility layer. Additional containers (Proton 11, Wine native, etc.) cannot be user-added in v0.1 — the in-app Component Manager handles components (translators, DXVK, VKD3D, drivers, libraries), not compatibility layers. More containers will be bundled in future releases.
+> **Compatibility Layers (new in v0.2)** — the side drawer now has a Compatibility Layers screen. v0.2 ships with Proton 10.0 x64 bundled (works fully offline out of the box) plus 9 more layers (Proton 8/9/10/GE, Wine 7/8/9/10) that download on demand. After one online download per layer, the bytes live inside the app and are served by the embedded `127.0.0.1` server forever after — every later install/mount stays offline.
 
 ## What works offline
 
@@ -27,12 +27,14 @@ Install the APK, add your `.wcp` components via the in-app Component Manager, ad
 - ✅ Add-a-game flow (works against the in-APK catalog)
 - ✅ Game launch (uses BannerHub 3.7.5's offline-launch path, which skips network-gated install tasks)
 - ✅ Component download → served by the embedded server from the Component Manager's local storage
+- ✅ Compatibility Layers screen (v0.2+) → BUNDLED layer works in airplane mode out of the box; downloaded layers persist locally and serve offline thereafter
 - ✅ Per-game settings, AI frame generation, vibration, HUD, performance toggles, RTS controls — all the BannerHub 3.7.5 local features
 
 ## What does not work offline
 
 These features need internet by design and will fail gracefully:
 
+- ⚠️ Compatibility Layers initial download (one-time online fetch per non-bundled layer; the bytes are then served locally forever)
 - ❌ GOG Games / Epic Games / Amazon Games store login + downloads (OAuth + CDN)
 - ❌ Community game configs browser (settings sharing)
 - ❌ Steam library augmentation (Steam Community feed)

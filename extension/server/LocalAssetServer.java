@@ -5,6 +5,8 @@ import android.content.res.AssetManager;
 import android.util.Log;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 
@@ -13,11 +15,19 @@ import fi.iki.elonen.NanoHTTPD.Response.Status;
 
 import static fi.iki.elonen.NanoHTTPD.newFixedLengthResponse;
 
-/** Serves files from APK assets/local-mirror/&lt;path&gt;. */
+/** Serves files from the local-mirror tree.
+ *  Lookup order:
+ *    1. {@code files/local-mirror/<path>} (writable runtime mirror; populated
+ *       lazily by ContainerLibrary.addToCatalog and similar mutators)
+ *    2. {@code assets/local-mirror/<path>} (read-only APK assets)
+ *  This lets feature code mutate individual catalog files at runtime by
+ *  copying them into the writable mirror and editing them there, without
+ *  needing a first-launch bulk extract. */
 final class LocalAssetServer {
 
     private static final String TAG = "BH-NanoServer";
     private static final String ASSET_ROOT = "local-mirror";
+    static final String FILES_MIRROR_DIR = "local-mirror";
 
     private final Context ctx;
 
@@ -29,6 +39,18 @@ final class LocalAssetServer {
         String clean = normalize(path);
         if (clean == null) {
             return newFixedLengthResponse(Status.BAD_REQUEST, "text/plain", "");
+        }
+
+        File override = new File(ctx.getFilesDir(), FILES_MIRROR_DIR + "/" + clean);
+        if (override.isFile() && override.canRead()) {
+            try (InputStream in = new FileInputStream(override)) {
+                byte[] bytes = readAll(in);
+                return newFixedLengthResponse(Status.OK,
+                        "application/json; charset=utf-8",
+                        new String(bytes, "UTF-8"));
+            } catch (IOException e) {
+                Log.w(TAG, "files-mirror read failed, falling back to asset: " + clean, e);
+            }
         }
 
         AssetManager am = ctx.getAssets();
@@ -43,12 +65,23 @@ final class LocalAssetServer {
         }
     }
 
-    /** Read a normalized asset path as a UTF-8 string. Used by routes that need to
-     *  transform the asset payload before responding (e.g. type-filter on
-     *  getComponentList). Returns null on missing/invalid path. */
+    /** Read a normalized path as a UTF-8 string. Used by routes that need to
+     *  transform the payload before responding (e.g. type-filter on
+     *  getComponentList). Same files-first / asset-fallback chain as serve().
+     *  Returns null on missing/invalid path. */
     String readAsString(String path) {
         String clean = normalize(path);
         if (clean == null) return null;
+
+        File override = new File(ctx.getFilesDir(), FILES_MIRROR_DIR + "/" + clean);
+        if (override.isFile() && override.canRead()) {
+            try (InputStream in = new FileInputStream(override)) {
+                return new String(readAll(in), "UTF-8");
+            } catch (IOException e) {
+                Log.w(TAG, "files-mirror readAsString failed, falling back to asset: " + clean, e);
+            }
+        }
+
         try (InputStream in = ctx.getAssets().open(ASSET_ROOT + "/" + clean)) {
             return new String(readAll(in), "UTF-8");
         } catch (IOException e) {

@@ -1,0 +1,471 @@
+# Container Library — Implementation Plan
+
+## Status
+
+- **Branch:** `feature/compatibility-layers` (pushed to origin)
+- **Last completed:** Phase 4 — first CI build green on `feature/compatibility-layers` (run `26347700285`)
+- **Next up:** Phase 5 — device test on user's hardware (drawer row → activity → download → in-picker visibility)
+- **Phases complete:** Phase 0 ✅, Phase 1 ✅, Phase 2 ✅, Phase 3 ✅, Phase 4 ✅ (Phase 5–6 pending)
+
+| Phase                          | Jobs done | Total | Status      |
+| ------------------------------ | --------- | ----- | ----------- |
+| 0 — Writable catalogs          | 3         | 3     | ✅ complete |
+| 1 — known-containers.json      | 2         | 2     | ✅ complete |
+| 2 — Backend (ContainerLibrary) | 4         | 4     | ✅ complete |
+| 3 — UI Activity                | 4         | 4     | ✅ complete |
+| 4 — CI + asset wiring          | 3         | 3     | ✅ complete |
+| 5 — Device test                | 0         | 1     | not started |
+| 6 — v0.2 release (gated)       | 0         | 5     | not started |
+
+After every job: tick the inline checkbox below, bump the Jobs-done counter in this table, append to `~/BANNERHUB_OFFLINE_NANO_PROGRESS_LOG.md`, and update memory ([[project_bannerhub_offline_nano]]). After every phase: also flip the "Status" column for that phase.
+
+---
+
+
+In-app "Compatibility Layers" screen that lets users download additional Wine/Proton containers from `bannerhub-api` GH Releases at runtime. Add-only, containers/compat-layers only (no components). Downloaded containers persist in `/data/data/banner.nano.offline/files/components-cdn/` and are served to the rest of the app via the existing embedded NanoHTTPD server. After a one-time online download, each container works fully offline forever.
+
+## Architecture summary
+
+```
+┌────────────────────────────────────────────────────────────┐
+│  Side drawer (smali-injected row)                          │
+│      ↓                                                      │
+│  ContainerLibraryActivity (extension Java + XML layout)     │
+│      ↓                                                      │
+│  ContainerLibrary (backend)                                 │
+│      ├─ reads assets/local-mirror/known-containers.json     │
+│      ├─ reads files/components-cdn/getContainerList.json    │
+│      ├─ ContainerDownloader (HttpURLConnection, bypasses    │
+│      │   our patched offline interceptors)                  │
+│      └─ writes files/components-cdn/getContainerList.json   │
+│                                                              │
+│  BannerHubLocalServer (unchanged)                           │
+│      ├─ serves catalog from files/components-cdn/           │
+│      └─ serves binaries from files/ (downloaded) or         │
+│         assets/ (bundled)                                   │
+└────────────────────────────────────────────────────────────┘
+```
+
+Key principle: the rest of the app (game launch, picker, install) sees no change. New containers just appear in `getContainerList` and the existing download/install/mount stack handles them.
+
+## Known canonical IDs
+
+From user-pasted strings (also bundled as `data/known-containers.json`):
+
+| ID | Display name        | Framework | Type   | Wine archive size | Bundled? |
+| -- | ------------------- | --------- | ------ | ----------------- | -------- |
+| 2  | proton10.0-arm64x-2 | arm64X    | proton | 216 MB            | No       |
+| 3  | wine9.5-x64-2       | X64       | stable | 157 MB            | No       |
+| 4  | proton9.0-x64-3     | X64       | proton | 156 MB            | No       |
+| 5  | wine10.0-x64-2      | X64       | stable | 163 MB            | No       |
+| 6  | wine10.6-arm64x-2   | arm64X    | stable | 220 MB            | No       |
+| 7  | wine9.16-x64-2      | X64       | stable | 153 MB            | No       |
+| 8  | wine9.13-x64-2      | X64       | stable | 154 MB            | No       |
+| 9  | proton9.0-arm64x-3  | arm64X    | proton | 211 MB            | No       |
+| 10 | proton10.0-x64-1    | X64       | proton | 164 MB            | **Yes**  |
+| 11 | proton11.0-arm64x   | arm64X    | proton | 251 MB            | No       |
+
+IDs stay canonical (no offset) so game launch configs referencing e.g. container id 4 resolve correctly post-download.
+
+---
+
+## Phase 0 — Prerequisite: writable catalogs
+
+**Blocker for everything else.** Server currently reads catalog JSONs from read-only APK assets. We need them writable.
+
+**Strategy (simplified after Phase 0.4 recon):** Recon confirmed there is no in-memory cache anywhere in `LocalAssetServer` / `BannerHubLocalServer` / `LocalCdnServer` — every request fresh-reads from `AssetManager`. So we only need to teach the asset server to look in a writable mirror first, and lazy-extract individual catalog files on first mutation (no first-launch bulk extraction needed). Binaries already use a files-first chain in `LocalCdnServer.locate()`; we'll add the new writable mirror dir to that chain too.
+
+**Writable mirror path:** `/data/data/banner.nano.offline/files/local-mirror/` — exact shape match to `assets/local-mirror/` so the override is a 1:1 path swap.
+
+### Jobs
+
+- [x] **0.4** Verify whether catalog responses are cached — **DONE 2026-05-23 (no work needed)**
+  - Read both `LocalAssetServer.java` (`serve()` + `readAsString()`) and `BannerHubLocalServer.serveComponentListFiltered()`: every code path calls `AssetManager.open()` fresh, builds a new byte array, returns a new `Response`. No in-memory cache anywhere. Hot-reload comes for free as soon as we point reads at the filesystem.
+  - Runtime acceptance check (curl twice with a `touch` between) deferred to Phase 5 device test once the mutation UI exists.
+- [x] **0.1** `LocalAssetServer` files-first / asset-fallback — **DONE 2026-05-23**
+  - Both `serve(path)` and `readAsString(path)` now check `files/local-mirror/<path>` first via `FileInputStream`, fall back to `AssetManager.open("local-mirror/" + path)` on miss/error
+  - Added `FILES_MIRROR_DIR` package-visible constant for ContainerLibrary to reuse when writing
+  - Javadoc updated to document the new lookup order
+- [x] **0.2** `LocalCdnServer.locate()` extended — **DONE 2026-05-23**
+  - Added `files/local-mirror/components-cdn/<filename>` as first candidate in the chain
+  - Existing `files/components/`, externalFilesDir, sdcard slots preserved (back-compat)
+  - Class-level Javadoc updated to reflect the new 5-slot search order
+- [x] **0.3** No first-launch bulk extractor — folded into ContainerLibrary in Phase 2 (lazy copy on first mutation)
+
+### Acceptance
+
+Build, install fresh, verify:
+- `/data/data/banner.nano.offline/files/components-cdn/getContainerList.json` exists post-launch
+- Manually edit it, hit `curl 127.0.0.1:51823/simulator/v2/getContainerList` → new content visible
+- Game launch (existing flow) still works
+
+---
+
+## Phase 1 — Known-containers catalog asset
+
+Bake the 9 user-pasted strings as a single JSON file shipped in the APK.
+
+### Jobs
+
+- [x] **1.1** `data/known-containers.json` written — **DONE 2026-05-23**
+  - 9 entries (IDs 2, 3, 4, 5, 6, 7, 8, 9, 11); id 10 (proton10.0-x64-1) intentionally absent — already bundled
+  - Outer `state`/`version` wrapper + `entry.fileType` (=3) stripped per design
+  - `is_steam` preserved verbatim (1 for proton/arm64x entries, 2 for wine/x64 stable)
+  - Three `_comment` keys at the top capture intent: catalog purpose, target release, and the steamuser/xuser md5-shape quirk warning ([[project_bannerhub_api_proton_x64_subdata_fix]])
+  - Validated as JSON (`python3 -c "import json; json.load(open(...))"`)
+  - `download_hint` field NOT added — current design fetches from `download_url` directly; the v0.3+ manual-source hint path can append the field later without churning the catalog
+- [x] **1.2** Build workflow copies the asset — **DONE 2026-05-23**
+  - `build-quick.yml` step "Bundle local API mirror" gets a one-liner `cp data/known-containers.json apktool_out/assets/local-mirror/known-containers.json` right after the `prepare_local_mirror.py` invocation
+  - `build.yml` gets the same one-liner targeting `apktool_out_base/` per [[feedback_bannerhub_buildyml_paths]]
+  - Comment notes: the asset is NOT served by the embedded NanoHTTPD; ContainerLibraryActivity reads it directly from `AssetManager` at runtime to populate the downloadable list
+
+### Acceptance
+
+Built APK contains `assets/local-mirror/known-containers.json`, valid JSON, 9 entries. Verify via `unzip -p BannerHub-Nano-Offline-vN.apk assets/local-mirror/known-containers.json | jq '.containers | length'` → 9.
+
+---
+
+## Phase 2 — Backend (`ContainerLibrary`)
+
+Pure Java in `extension/server/`. No Android UI dependencies; testable in isolation.
+
+### Jobs
+
+- [x] **2.1** `ContainerInfo.java` POJO + State enum — **DONE 2026-05-23**
+  - All 17 fields mirror known-containers.json entry shape
+  - `State` enum: BUNDLED / INSTALLED / NOT_INSTALLED
+  - `static ContainerInfo fromJson(JSONObject)` — parses known-containers OR getContainerList list element
+  - `JSONObject toJson()` — serializes to exact getContainerList data.list element shape (round-trip safe)
+  - `String sizeLabel()` — human-readable bytes (only wine archive; sub_data is ~10 MB rounding error)
+  - `String badge()` — "X64 · proton" / "arm64X · stable" for row UI
+- [x] **2.2** `ContainerLibrary.java` — **DONE 2026-05-23**
+  - `static List<ContainerInfo> listAll(Context)` — merges bundled asset (BUNDLED only) + known-containers asset (state-stamped via file presence) into a deduped list (LinkedHashMap by id; bundled wins collisions)
+  - `static boolean isInstalled(Context, ContainerInfo)` — both archives exist in files/local-mirror/components-cdn/
+  - `static synchronized void addToCatalog(Context, ContainerInfo)` — lazy-copies bundled asset to writable mirror on first call (atomic via .bootstrap.tmp + rename to dodge concurrent server reads), parses envelope (handles both stringified-array and bare-array shapes), appends entry, re-serializes preserving original shape, atomic .tmp + rename. Idempotent on duplicate ids.
+  - `static File cdnFile(Context, String)` — helper for downloader to compute archive destination paths
+- [x] **2.3** `ContainerDownloader.java` — **DONE 2026-05-23**
+  - `boolean download(ContainerInfo, ProgressListener)` — sequential: wine archive → MD5 verify → sub_data → atomic renames → addToCatalog
+  - Raw HttpURLConnection (bypasses patched OkHttp + Aria)
+  - Connect/read timeouts 15s/30s, 64 KB buffer
+  - MD5 only on wine archive (per [[project_bannerhub_api_proton_x64_subdata_fix]] sub_data quirk)
+  - Atomic rename on success; rollback (delete) on later failure so listAll always sees a consistent state
+  - `void cancel()` — cooperatively cancels mid-stream read
+- [x] **2.4** `ProgressListener` interface — **DONE 2026-05-23**
+  - `onPhase(String)` — "Downloading wine binaries", "Verifying MD5", "Downloading wineprefix", "Updating catalog"
+  - `onProgress(long bytesDone, long bytesTotal, String filename)`
+  - `onComplete(ContainerInfo)`
+  - `onError(String reason)`
+  - Comments document threading expectations (caller's thread; UI must marshal)
+
+**Local compile check:** `javac -source 8 -target 8 -cp android.jar:nanohttpd.jar extension/Container*.java extension/ProgressListener.java` → clean (only a deprecation note for an HttpURLConnection-adjacent API, harmless).
+
+### Acceptance
+
+Backend unit-callable from a debug logcat hook (or quick test activity):
+- `listAll()` returns 10 entries (1 BUNDLED, 9 NOT_INSTALLED) on fresh install
+- After manual file drop into `files/components-cdn/`, `listAll()` flips that entry to INSTALLED
+- `addToCatalog()` writes valid JSON, server immediately returns new entry on next request
+
+---
+
+## Phase 3 — UI Activity
+
+XML-layout-based Activity (no Compose — keeps it within extension-Java comfort zone). Material 3 themed to match host app where possible.
+
+### Reference patterns (anchored from 3.7.5 base recon)
+
+**Drawer-row injection target (confirmed):** `patches/smali_classes5/com/xj/landscape/launcher/ui/menu/HomeLeftMenuDialog.smali` — already carries our Epic/GOG/Amazon rows in BannerHub v3.7.5 (no icons, text-only, hardcoded label strings). Two existing patch sections to mirror:
+
+1. **Row construction block** (~line 3924+): `const-string v7, "GOG"` style — add `"Compatibility Layers"` row with next free id (=13, since GOG=10, Amazon=11, Epic=12).
+2. **Click dispatcher block** (~line 1583+): switch on row label → `const-class pN, Lapp/revanced/extension/gamehub/<Activity>;` — add a case for "Compatibility Layers" pointing at our new activity.
+
+**Activity styling reference (confirmed):** mirror the existing extension activities (`extension/EpicMainActivity.java`, `GogMainActivity.java`, `AmazonMainActivity.java`) — same package (`app.revanced.extension.gamehub`), same AppCompat-based theme, same list-style layout. These are already proven to render correctly inside the BannerHub v3.7.5 shell.
+
+### Jobs
+
+- [x] **3.1** Recon `HomeLeftMenuDialog.smali` — **DONE 2026-05-23**
+  - Click dispatcher at line 1576+ (pswitch_9 .. pswitch_13 already present for Component Manager + GOG=10 + Amazon=11 + Epic=12 + Game Configs=13)
+  - Row construction at line 3913+ (Components + GOG + Amazon + Epic + Game Configs blocks, all using `menu_setting_normal:I` icon)
+  - Packed-switch table at line 1626–1642 (`.packed-switch 0x0` listing labels in id order)
+  - **Critical correction:** id=13 (0xd) was TAKEN by "Game Configs" (this is nano's local addition). Plan-doc id=13 bumped to **id=14 (0xe)** for Compatibility Layers.
+- [x] **3.2** Smali patch — **DONE 2026-05-23** (3 edits to one file)
+  - Click dispatcher: added `:pswitch_14` block after `:pswitch_13` (Game Configs) — new-instance Intent → const-class `Lapp/revanced/extension/gamehub/ContainerLibraryActivity;` → invoke-direct init → startActivity → goto :goto_1
+  - Packed-switch table: appended `:pswitch_14` after `:pswitch_13` (the table is dense from 0x0, so id 0xe is the 15th entry — the new line)
+  - Row construction: added "Compatibility Layers" MenuItem (id=0xe, icon=menu_setting_normal, label string) right after Game Configs row
+- [x] **3.3** `extension/ContainerLibraryActivity.java` — **DONE 2026-05-23, compiles clean**
+  - Pure-Java UI (no XML layouts) — matches Epic/Gog/Amazon convention
+  - ScrollView + LinearLayout column; per-container row = horizontal LinearLayout with stacked text (name bold + meta "239 MB · X64 · proton" + dynamic status line) + right-side Button + ProgressBar
+  - State-driven button rendering: BUNDLED (gray, disabled), INSTALLED (green, disabled), NOT_INSTALLED (accent blue, "DOWNLOAD" → tap handler)
+  - Download tap: `ConnectivityManager.getActiveNetwork() + NetworkCapabilities.NET_CAPABILITY_INTERNET` check (raw, bypasses patched NetworkUtils per [[project_bannerhub_offline_nano]] build #6/#12/#13 patches). Airplane → toast.
+  - Online: button → "CANCEL" (red), progress visible, indeterminate during phases (Preparing/Verifying MD5/Updating catalog), determinate during actual downloads. Background `Thread` named "ContainerDL-{id}" runs ContainerDownloader; ProgressListener callbacks marshalled to UI thread via `runOnUiThread`.
+  - On complete: toast + `rebuildRows()` (full re-render reflects new INSTALLED state)
+  - On error: toast with reason + `rebuildRows()` (reverts to NOT_INSTALLED since downloader already cleaned up)
+  - Per-row RowViews holder in a Map<id, RowViews> so listener callbacks can find the views without view-tree lookups
+- [x] **3.4** Register `ContainerLibraryActivity` — **DONE 2026-05-23**
+  - One-line `<activity>` added to `patches/AndroidManifest.xml` after BhGameConfigsActivity
+  - Mirrors existing extension activity registration shape: `configChanges` for keyboard/orientation/screen-size + `screenOrientation="sensorLandscape"`
+  - Build wiring is automatic — `build-quick.yml:57` does `cp -r patches/. apktool_out/` wholesale before apktool b
+- [x] **3.5** Layout XML files — **ELIMINATED** (no XML layouts; UI is pure Java per Epic/Gog/Amazon convention)
+
+### Acceptance
+
+- Drawer shows "Compatibility Layers" row
+- Tap row → activity opens with 10 entries listed
+- Tap Download on (e.g.) proton11.0-arm64x with internet on → progress bar fills → completes → badge → INSTALLED
+- Open in-app container picker → proton11.0-arm64x now appears
+- Import + launch a game using proton11.0-arm64x → works
+- Subsequent app launches (even in airplane mode) → proton11.0-arm64x still works for game launches
+
+---
+
+## Phase 4 — CI + asset wiring
+
+Make sure the new code, layouts, and asset all flow through both build workflows.
+
+### Jobs
+
+- [x] **4.1** `build-quick.yml` updates — **DONE 2026-05-23, verified green in CI**
+  - known-containers.json copy step ran cleanly (log: `assets/local-mirror/known-containers.json (OK - compressed)`)
+  - Extension Java picked up by existing pipeline — `classes18.dex` built and packaged (`adding: classes18.dex (deflated 57%)`, 734 MB pre-zip)
+  - `patches/.` cp-wholesale at line 57 lands all our new pieces (AndroidManifest activity registration + HomeLeftMenuDialog.smali edits) into apktool_out/
+  - smali_classes5 reassembled into classes5.dex without errors (`I: Smaling smali_classes5 folder...`)
+- [x] **4.2** `build.yml` parity — **DONE 2026-05-23** (same one-line edit; untested in this run since build-quick is the dev workflow per [[feedback_ci_workflows]])
+- [x] **4.3** Lint pass — **DONE 2026-05-23** (implicit; build's own apktool b + apksigner sign succeeded; aapt2 errors would have failed the step)
+  - CI run `26347700285` succeeded in 4m30s
+  - Artifact `BannerHub-pre-feature-compatibility-layers` uploaded (artifact id `7180957940`, 692 MB zip)
+  - URL: https://github.com/The412Banner/bannerhub-nano-offline/actions/runs/26347700285/artifacts/7180957940
+
+### Acceptance
+
+Green CI run, APK installs cleanly, new activity launches via drawer.
+
+---
+
+## Phase 5 — End-to-end device test
+
+### Test plan
+
+| # | Step                                                          | Expected                                          |
+| - | ------------------------------------------------------------- | ------------------------------------------------- |
+| 1 | Fresh install + internet ON                                   | App opens, drawer has "Compatibility Layers" row  |
+| 2 | Tap Compatibility Layers                                      | List of 10 (1 BUNDLED + 9 NOT_INSTALLED)          |
+| 3 | Tap Download on proton11.0-arm64x                             | Progress bar → completes → INSTALLED              |
+| 4 | Verify file presence                                          | `ls files/components-cdn/` shows both archives    |
+| 5 | Verify catalog                                                | `curl 127.0.0.1:51823/simulator/v2/getContainerList` returns 2 entries |
+| 6 | Import a PC game that needs Proton 11                         | Picker shows proton11.0-arm64x, selectable        |
+| 7 | Launch the game (still online)                                | Game launches                                     |
+| 8 | Airplane mode ON, kill app, relaunch, launch same game        | Game launches (zero outbound traffic for launch)  |
+| 9 | Try Download with airplane mode ON                            | Toast: "Turn off airplane mode"                   |
+| 10| Kill app mid-download, relaunch                               | Partial files cleaned up, state = NOT_INSTALLED   |
+
+### Acceptance
+
+All 10 rows pass. Airplane-mode launch behavior of bundled container (proton10.0-x64-1) unchanged. No regression in any existing nano-offline flow.
+
+---
+
+## Phase 6 — v0.2 release (gated on explicit user "stable" signal)
+
+**Only when user explicitly approves promoting the current pre-release to stable.** Until then, every Phase 5 device-test pass produces another pre-release artifact on `feature/compatibility-layers` via `build-quick.yml` and stops there.
+
+When the go-ahead comes:
+- [ ] Merge `feature/compatibility-layers` → `main`
+- [ ] Update `RELEASE_NOTES.md` — new feature: Compatibility Layers
+- [ ] Update `README.md` — note that nano-offline ships proton10.0-x64-1 and 9 more are 1-tap downloadable from inside the app
+- [ ] Update `PROGRESS_LOG.md`
+- [ ] Tag `v0.2` on `main` (prep commit), trigger Manual Release Build workflow, mark as stable (`isPrerelease: false`)
+- [ ] Update memory ([[project_bannerhub_offline_nano]])
+
+---
+
+## Out of scope (explicitly deferred)
+
+- **Removing / uninstalling** containers (add-only per scope)
+- **Removing / hiding bundled components** from pickers
+- **User-supplied custom .tzst** files (off-list containers)
+- **.wcp ingestion** (single-file format) — could be v0.3 if users start asking
+- **Component downloads** (translators, DXVK, etc.) — bundled set is sufficient, not size-prohibitive
+- **Download resume** — if download interrupted, restart from 0. HTTP Range support exists in our local server but we're hitting github.com here, not our server. Could add later via `If-Range` / `Range` headers; current scope is fresh download only.
+- **Background downloads** — download must stay foreground (activity visible). Could promote to WorkManager later if users complain.
+- **Multi-arch detection** — UI shows all 10 regardless of device arch. Filtering would be nice (hide arm64X on x86_64 emulators or vice versa) but adds device-detection complexity.
+
+---
+
+## Decisions (locked 2026-05-23)
+
+1. **No drawer icon, text-only row** — mirror existing Epic/GOG/Amazon treatment in `HomeLeftMenuDialog.smali` (`const-string` label + class ref, no icon resource).
+2. **Activity styling** — clone `extension/EpicMainActivity.java` (or whichever of Epic/GOG/Amazon has the closest list-view shape). Same `app.revanced.extension.gamehub` package, same AppCompat theme.
+3. **`is_steam` field** — preserve verbatim from each known-containers entry. Values in user-pasted strings: `1` for proton/arm64x, `2` for wine/x64 stable.
+4. **Phase 0.4 cache check** — open until verified in-job; folded into Phase 0.4 itself with an acceptance test.
+
+## Workflow constraints (locked 2026-05-23)
+
+- **Branch:** `feature/compatibility-layers` — all commits land here, nothing on `main` until user signs off as stable.
+- **Build pipeline:** quick build workflow (`.github/workflows/build-quick.yml`) for every iteration. No Manual Release Build runs during dev.
+- **Release labeling:** every published artifact is a **pre-release** (`isPrerelease: true`, no `latest` flag, no v-tag promotion). Matches the post-v0.1 [[feedback_bannerhub_prerelease]] policy.
+- **Stable cut:** only when user explicitly says "this is stable" — at that point we promote the latest pre-release artifact to a tagged release on `main` (Phase 6 below).
+
+---
+
+## Working notes & implementation references
+
+### Drawer-row injection — exact location
+
+`patches/smali_classes5/com/xj/landscape/launcher/ui/menu/HomeLeftMenuDialog.smali` in both the v3.7.5 base (`~/bannerhub/`) and nano-offline (`~/bannerhub-nano-offline/`).
+
+**Two blocks to patch (already carry the Epic/GOG/Amazon precedent):**
+
+```
+~line 1583:  Click dispatcher
+    # BannerHub: GOG menu item
+    const-class p1, Lapp/revanced/extension/gamehub/GogMainActivity;
+    # BannerHub: Amazon Games menu item
+    const-class p1, Lapp/revanced/extension/gamehub/AmazonMainActivity;
+    # BannerHub: Epic Games menu item
+    const-class p1, Lapp/revanced/extension/gamehub/EpicMainActivity;
+    # ADD: Compatibility Layers menu item
+    const-class p1, Lapp/revanced/extension/gamehub/ContainerLibraryActivity;
+
+~line 3924:  Row construction
+    # BannerHub: GOG menu item (id=10)
+    const-string v7, "GOG"
+    # BannerHub: Amazon Games menu item (id=11)
+    const-string v7, "Amazon"
+    # BannerHub: Epic Games menu item (id=12)
+    const-string v7, "Epic"
+    # ADD: Compatibility Layers menu item (id=13)
+    const-string v7, "Compatibility Layers"
+```
+
+Read the existing patches/blocks in full before patching — there are register-allocation and goto-label patterns to preserve. Run baksmali on `HomeLeftMenuDialog.smali` to inspect the register state at the inject point per [[feedback_revanced_high_register_invoke]] (this class has < 16 regs based on `p1` usage, so high-register encoding pitfall likely doesn't apply here, but verify).
+
+### Extension Java compile pipeline (existing, reuse as-is)
+
+From `build-quick.yml` lines ~830–980 (in v3.7.5; verify in nano-offline):
+
+1. `javac -source 8 -target 8 -d /tmp/extclasses extension/**/*.java -cp <android.jar + classes from apktool>`
+2. `d8 --output classes18.dex /tmp/extclasses/`
+3. Inject `classes18.dex` into `apktool_out/` before `apktool b` rebuild
+
+**Existing extension files in nano-offline `extension/`** (to be referenced/extended):
+- `server/BannerHubLocalServer.java` — main router, executeScript dispatch, type filter
+- `server/LocalAssetServer.java` — generic asset/file server
+- `server/LocalCdnServer.java` — components-cdn binary server with Range support
+- `AmazonAuthClient.java` — sample existing extension Java
+- `EpicMainActivity.java` / `GogMainActivity.java` / `AmazonMainActivity.java` — **template activities for ContainerLibraryActivity** (verify exact filenames during implementation)
+
+### Smali patch dir conventions
+
+Per [[feedback_bannerhub_buildyml_paths]]:
+- `build.yml` `prepare` job patches `apktool_out_base/`
+- `build.yml` `build` job (post-artifact) patches `apktool_out/`
+- `build-quick.yml` patches `apktool_out/` only
+
+Per [[feedback_bannerhub_smali_classes12_rebuilt]]: **never patch `smali_classes12/`** — it's rm'd and replaced by prebuilt `classes12.dex` at packaging. Our HomeLeftMenuDialog injection is in `smali_classes5/` (safe).
+
+### Writable runtime paths
+
+- App data dir: `/data/data/banner.nano.offline/files/`
+- Catalog writable copy: `/data/data/banner.nano.offline/files/components-cdn/`
+- Downloaded binaries: same dir, alongside catalogs
+- Sentinel: `/data/data/banner.nano.offline/files/.catalogs-extracted-vN` (N = APK versionCode)
+
+### Server endpoint quick reference (current, for context)
+
+| Path                                          | Source                              | Notes                       |
+| --------------------------------------------- | ----------------------------------- | --------------------------- |
+| `/simulator/v2/getContainerList`              | catalog JSON                        | **mutation target**         |
+| `/simulator/v2/getComponentList?type=N`       | trimmed catalog + type filter (v17) | Components — not touched    |
+| `/simulator/v2/getAllComponentList`           | trimmed catalog                     | Components — not touched    |
+| `/simulator/v2/getImagefsDetail`              | static                              | Firmware                    |
+| `/simulator/executeScript` (POST)             | dispatch on gpu+game_type           | 4 variants                  |
+| `/components-cdn/<filename>`                  | files/ then assets/                 | Binary serve, Range support |
+
+### The 9 downloadable containers (normalized for `data/known-containers.json`)
+
+```json
+{
+  "_comment": "Compatibility layers downloadable from the in-app Compatibility Layers screen. Pulled from bannerhub-api GH Releases at runtime. IDs are canonical (match upstream/bundled space).",
+  "containers": [
+    {"id":2,"display_name":"proton10.0-arm64x-2","name":"proton10.0-arm64x-2","framework":"arm64X","framework_type":"proton","file_md5":"6dcb13706c9c7720b074ee020ce39bbc","file_name":"wine_proton10.0-arm64x-2.tar.zst","file_size":216807973,"download_url":"https://github.com/The412Banner/bannerhub-api/releases/download/Components/wine_proton10.0-arm64x-2.tar.zst","sub_data":{"sub_file_md5":"439b7ec0ae13685aee76a10904ebccf4","sub_file_name":"6dcb13706c9c7720b074ee020ce39bbc.tzst","sub_download_url":"https://github.com/The412Banner/bannerhub-api/releases/download/Components/6dcb13706c9c7720b074ee020ce39bbc.tzst"},"version":"1.0.3","version_code":4,"is_steam":1,"logo":"https://github.com/The412Banner/bannerhub-api/releases/download/Components/45e60d211d35955bd045aabfded4e64b.png"},
+    {"id":3,"display_name":"wine9.5-x64-2","name":"wine9.5-x64-2","framework":"X64","framework_type":"stable","file_md5":"e78be524fd1b01fb7565eb01a9fd4187","file_name":"wine_9.5.tar.zst","file_size":157199545,"download_url":"https://github.com/The412Banner/bannerhub-api/releases/download/Components/wine_9.5.tar.zst","sub_data":{"sub_file_md5":"7c88ba89b95f7099d7b12384ed92907a","sub_file_name":"e78be524fd1b01fb7565eb01a9fd4187.tzst","sub_download_url":"https://github.com/The412Banner/bannerhub-api/releases/download/Components/e78be524fd1b01fb7565eb01a9fd4187.tzst"},"version":"1.0.0","version_code":1,"is_steam":2,"logo":"https://github.com/The412Banner/bannerhub-api/releases/download/Components/45e60d211d35955bd045aabfded4e64b.png"},
+    {"id":4,"display_name":"proton9.0-x64-3","name":"proton9.0-x64-3","framework":"X64","framework_type":"proton","file_md5":"83b3a2a16f7d643ce366c8ad686cbcf7","file_name":"wine_proton_9.0_x64.tar.zst","file_size":156893611,"download_url":"https://github.com/The412Banner/bannerhub-api/releases/download/Components/wine_proton_9.0_x64.tar.zst","sub_data":{"sub_file_md5":"6f41b9c15b5bc97a0365b65da2b7545f","sub_file_name":"6f41b9c15b5bc97a0365b65da2b7545f.tzst","sub_download_url":"https://github.com/The412Banner/bannerhub-api/releases/download/Components/6f41b9c15b5bc97a0365b65da2b7545f.tzst"},"version":"1.0.0","version_code":1,"is_steam":1,"logo":"https://github.com/The412Banner/bannerhub-api/releases/download/Components/45e60d211d35955bd045aabfded4e64b.png"},
+    {"id":5,"display_name":"wine10.0-x64-2","name":"wine10.0-x64-2","framework":"X64","framework_type":"stable","file_md5":"66e25e9a8fde74e8feb4e3b2ba9f6201","file_name":"wine_10.0.tar.zst","file_size":163346754,"download_url":"https://github.com/The412Banner/bannerhub-api/releases/download/Components/wine_10.0.tar.zst","sub_data":{"sub_file_md5":"7ebf0365a7fc6e5c36e159b3975fa439","sub_file_name":"66e25e9a8fde74e8feb4e3b2ba9f6201.tzst","sub_download_url":"https://github.com/The412Banner/bannerhub-api/releases/download/Components/66e25e9a8fde74e8feb4e3b2ba9f6201.tzst"},"version":"1.0.0","version_code":1,"is_steam":2,"logo":"https://github.com/The412Banner/bannerhub-api/releases/download/Components/45e60d211d35955bd045aabfded4e64b.png"},
+    {"id":6,"display_name":"wine10.6-arm64x-2","name":"wine10.6-arm64x-2","framework":"arm64X","framework_type":"stable","file_md5":"aeb9ee7dccf887d5d543963ce823f1cc","file_name":"wine_10.6_arm64x-2.tar.zst","file_size":220083873,"download_url":"https://github.com/The412Banner/bannerhub-api/releases/download/Components/wine_10.6_arm64x-2.tar.zst","sub_data":{"sub_file_md5":"758f0f8dbdb9935a261ca0730f119540","sub_file_name":"aeb9ee7dccf887d5d543963ce823f1cc.tzst","sub_download_url":"https://github.com/The412Banner/bannerhub-api/releases/download/Components/758f0f8dbdb9935a261ca0730f119540.tzst"},"version":"1.0.0","version_code":1,"is_steam":1,"logo":"https://github.com/The412Banner/bannerhub-api/releases/download/Components/45e60d211d35955bd045aabfded4e64b.png"},
+    {"id":7,"display_name":"wine9.16-x64-2","name":"wine9.16-x64-2","framework":"X64","framework_type":"stable","file_md5":"830a254f9b3c92aa850a502621037ae9","file_name":"wine_9.16.tar.zst","file_size":153061370,"download_url":"https://github.com/The412Banner/bannerhub-api/releases/download/Components/wine_9.16.tar.zst","sub_data":{"sub_file_md5":"74409280a831e9841f74488cb7c1bab4","sub_file_name":"830a254f9b3c92aa850a502621037ae9.tzst","sub_download_url":"https://github.com/The412Banner/bannerhub-api/releases/download/Components/830a254f9b3c92aa850a502621037ae9.tzst"},"version":"1.0.0","version_code":1,"is_steam":2,"logo":"https://github.com/The412Banner/bannerhub-api/releases/download/Components/45e60d211d35955bd045aabfded4e64b.png"},
+    {"id":8,"display_name":"wine9.13-x64-2","name":"wine9.13-x64-2","framework":"X64","framework_type":"stable","file_md5":"7b17485af1933955f2cb82958b7d45b7","file_name":"wine_9.13.tar.zst","file_size":154179227,"download_url":"https://github.com/The412Banner/bannerhub-api/releases/download/Components/wine_9.13.tar.zst","sub_data":{"sub_file_md5":"40f08ebe9849ede742d2a9b6d983698d","sub_file_name":"7b17485af1933955f2cb82958b7d45b7.tzst","sub_download_url":"https://github.com/The412Banner/bannerhub-api/releases/download/Components/7b17485af1933955f2cb82958b7d45b7.tzst"},"version":"1.0.0","version_code":1,"is_steam":2,"logo":"https://github.com/The412Banner/bannerhub-api/releases/download/Components/45e60d211d35955bd045aabfded4e64b.png"},
+    {"id":9,"display_name":"proton9.0-arm64x-3","name":"proton9.0-arm64x-3","framework":"arm64X","framework_type":"proton","file_md5":"2ff6952b6eec0ef881e97bde57ddc8e6","file_name":"wine_proton_9.0_arm64x.tar.zst","file_size":211725844,"download_url":"https://github.com/The412Banner/bannerhub-api/releases/download/Components/wine_proton_9.0_arm64x.tar.zst","sub_data":{"sub_file_md5":"ae9d3f0c04341ac4fbb933f1ce4b6409","sub_file_name":"ae9d3f0c04341ac4fbb933f1ce4b6409.tzst","sub_download_url":"https://github.com/The412Banner/bannerhub-api/releases/download/Components/ae9d3f0c04341ac4fbb933f1ce4b6409.tzst"},"version":"1.0.0","version_code":1,"is_steam":1,"logo":"https://github.com/The412Banner/bannerhub-api/releases/download/Components/45e60d211d35955bd045aabfded4e64b.png"},
+    {"id":11,"display_name":"proton11.0-arm64x","name":"proton11.0-arm64x","framework":"arm64X","framework_type":"proton","file_md5":"19f1e3ed3fe6985953039820681faa0f","file_name":"wine_proton_11.0_arm64x.tar.zst","file_size":251416426,"download_url":"https://github.com/The412Banner/bannerhub-api/releases/download/Components/19f1e3ed3fe6985953039820681faa0f.tar.zst","sub_data":{"sub_file_md5":"10e4cb165a42dd2a4416b7fbff687bc6","sub_file_name":"10e4cb165a42dd2a4416b7fbff687bc6.tzst","sub_download_url":"https://github.com/The412Banner/bannerhub-api/releases/download/Components/10e4cb165a42dd2a4416b7fbff687bc6.tzst"},"version":"1.0.2","version_code":3,"is_steam":1,"logo":"https://github.com/The412Banner/bannerhub-api/releases/download/Components/45e60d211d35955bd045aabfded4e64b.png"}
+  ]
+}
+```
+
+Notes on the data:
+- ID 10 (proton10.0-x64-1) is intentionally absent — already bundled in APK.
+- `download_url` for id=11 uses md5-named filename (`19f1e3ed3fe6985953039820681faa0f.tar.zst`); all others use friendly names. Both shapes work with our `LocalCdnServer` since we serve by filename, not by computed md5.
+- `sub_file_name` ≠ `sub_file_md5` for most entries — this is the documented steamuser/xuser md5-shape quirk from [[project_bannerhub_api_proton_x64_subdata_fix]]. Wine archive `file_md5` IS the binary md5 (verify on download). sub_data's `sub_file_md5` is what the app's install-time strict-check uses against the extracted wineprefix — don't try to verify it as a binary checksum at download time.
+
+### Connectivity check (bypass our patches)
+
+In `ContainerLibraryActivity.checkOnline()`:
+
+```java
+ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+Network active = cm.getActiveNetwork();
+if (active == null) return false;
+NetworkCapabilities caps = cm.getNetworkCapabilities(active);
+return caps != null && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);
+```
+
+This bypasses our three patched gates ([[project_bannerhub_offline_nano]] Build #6/#12/#13 patches don't touch `ConnectivityManager` itself, only `OfflineCacheInterceptor.a()` / `NetworkUtils.r()` / Aria `NetUtils.isConnected()`). So we get truthful answers here without undoing offline-mode behavior for the rest of the app.
+
+### Download path (bypass Aria + OkHttp)
+
+Use `HttpURLConnection` (raw Android, not wrapped by our patched OkHttp client). Or alternatively a clean OkHttp instance built without our `OfflineCacheInterceptor`. Either way the goal is to keep the connectivity-lie patches scoped to the game-launch path:
+
+```java
+URL url = new URL(container.downloadUrl);
+HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+conn.setConnectTimeout(15000);
+conn.setReadTimeout(30000);
+try (InputStream in = conn.getInputStream();
+     OutputStream out = new FileOutputStream(tmpFile)) {
+    byte[] buf = new byte[64 * 1024];
+    long total = conn.getContentLengthLong();
+    long done = 0;
+    int n;
+    while ((n = in.read(buf)) > 0) {
+        out.write(buf, 0, n);
+        done += n;
+        listener.onProgress(done, total, container.fileName);
+    }
+}
+// MD5 verify (wine archive only — see notes above re: sub_data)
+// Then atomic rename tmpFile → final.
+```
+
+### Repository pointers
+
+- nano-offline working tree: `/data/data/com.termux/files/home/bannerhub-nano-offline/`
+- BannerHub 3.7.5 base tree (recon reference): `/data/data/com.termux/files/home/bannerhub/`
+- BannerHub api source (where compat-layer archives are hosted): `/data/data/com.termux/files/home/bannerhub-api/`
+- v0.1 progress log: `/data/data/com.termux/files/home/BANNERHUB_OFFLINE_NANO_PROGRESS_LOG.md`
+
+### Build + ship reminders ([[feedback_ci_workflows]])
+
+- Feature branch builds → "Any branch compilation" workflow (artifact only, no release)
+- Final stable cut → "Manual Release Build" on `main` only
+- After every commit/push: update memory + PROGRESS_LOG per [[feedback_memory_update_workflow]]
+- No Claude co-author trailer per [[feedback_no_claude_coauthor]]
+- Git author email: `the412banner@users.noreply.github.com` per [[feedback_the412banner_git_email]]
+
+---
+
+## Phase dependencies
+
+```
+Phase 0 ──→ Phase 1 ──→ Phase 2 ──→ Phase 3 ──→ Phase 4 ──→ Phase 5 ──→ Phase 6
+(extract)  (asset)   (backend)   (UI)         (CI)         (test)       (ship)
+```
+
+Phase 0 is the only true blocker. Phases 1+2 can be done in parallel. Phase 3 depends on 2. Phases 4 and 5 are essentially sequential with 3.

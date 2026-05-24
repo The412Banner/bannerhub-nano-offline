@@ -33,7 +33,7 @@ public final class BannerHubLocalServer extends NanoHTTPD {
     // round numbers (50000) and known utilities (49152 ephemeral start, 51234
     // debug ports). If something does happen to occupy 51823 on a device,
     // NanoHTTPD.start() throws IOException and we log "Failed to bind".
-    static final int PORT = 51823;
+    public static final int PORT = 51823;
 
     private static volatile BannerHubLocalServer instance;
     private static final Object LOCK = new Object();
