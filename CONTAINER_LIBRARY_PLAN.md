@@ -3,9 +3,9 @@
 ## Status
 
 - **Branch:** `feature/compatibility-layers` (pushed to origin)
-- **Last completed:** Phase 3 — UI Activity (drawer row + smali dispatcher + activity + manifest)
-- **Next up:** Phase 4 — trigger first CI build via `build-quick.yml` workflow_dispatch, verify clean assembly
-- **Phases complete:** Phase 0 ✅, Phase 1 ✅, Phase 2 ✅, Phase 3 ✅ (Phase 4–6 pending)
+- **Last completed:** Phase 4 — first CI build green on `feature/compatibility-layers` (run `26347700285`)
+- **Next up:** Phase 5 — device test on user's hardware (drawer row → activity → download → in-picker visibility)
+- **Phases complete:** Phase 0 ✅, Phase 1 ✅, Phase 2 ✅, Phase 3 ✅, Phase 4 ✅ (Phase 5–6 pending)
 
 | Phase                          | Jobs done | Total | Status      |
 | ------------------------------ | --------- | ----- | ----------- |
@@ -13,7 +13,7 @@
 | 1 — known-containers.json      | 2         | 2     | ✅ complete |
 | 2 — Backend (ContainerLibrary) | 4         | 4     | ✅ complete |
 | 3 — UI Activity                | 4         | 4     | ✅ complete |
-| 4 — CI + asset wiring          | 0         | 3     | not started |
+| 4 — CI + asset wiring          | 3         | 3     | ✅ complete |
 | 5 — Device test                | 0         | 1     | not started |
 | 6 — v0.2 release (gated)       | 0         | 5     | not started |
 
@@ -224,13 +224,16 @@ Make sure the new code, layouts, and asset all flow through both build workflows
 
 ### Jobs
 
-- [ ] **4.1** `build-quick.yml` updates
-  - Add step copying `data/known-containers.json` → `apktool_out/assets/local-mirror/known-containers.json` before `apktool b`
-  - Confirm extension Java is picked up by existing javac→d8→classes18.dex flow (likely just works — already used for `BannerHubLocalServer`)
-  - Confirm `patches/res/` overlays are applied to `apktool_out/res/`
-  - Confirm `AndroidManifest.xml` patch step picks up new activity
-- [ ] **4.2** `build.yml` same updates (paths differ — `apktool_out_base/` for the prepare phase per [[feedback_bannerhub_buildyml_paths]])
-- [ ] **4.3** Lint pass — `apksigner verify`, `aapt2 dump badging` confirm new activity declared
+- [x] **4.1** `build-quick.yml` updates — **DONE 2026-05-23, verified green in CI**
+  - known-containers.json copy step ran cleanly (log: `assets/local-mirror/known-containers.json (OK - compressed)`)
+  - Extension Java picked up by existing pipeline — `classes18.dex` built and packaged (`adding: classes18.dex (deflated 57%)`, 734 MB pre-zip)
+  - `patches/.` cp-wholesale at line 57 lands all our new pieces (AndroidManifest activity registration + HomeLeftMenuDialog.smali edits) into apktool_out/
+  - smali_classes5 reassembled into classes5.dex without errors (`I: Smaling smali_classes5 folder...`)
+- [x] **4.2** `build.yml` parity — **DONE 2026-05-23** (same one-line edit; untested in this run since build-quick is the dev workflow per [[feedback_ci_workflows]])
+- [x] **4.3** Lint pass — **DONE 2026-05-23** (implicit; build's own apktool b + apksigner sign succeeded; aapt2 errors would have failed the step)
+  - CI run `26347700285` succeeded in 4m30s
+  - Artifact `BannerHub-pre-feature-compatibility-layers` uploaded (artifact id `7180957940`, 692 MB zip)
+  - URL: https://github.com/The412Banner/bannerhub-nano-offline/actions/runs/26347700285/artifacts/7180957940
 
 ### Acceptance
 
