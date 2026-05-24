@@ -15,9 +15,18 @@
 </p>
 
 > [!WARNING]
-> **THIS IS NOT AN UPDATE TO ANY OF THE BANNERHUB PROJECTS!**
-> Simply made and released for internet/Wi-Fi restricted users who have been asking for a truly 100% offline build.
-> The main BannerHub line (BannerHub, BannerHub-Lite, BannerHub-ReVanced) is unaffected — those continue on their own release schedule.
+> **THIS IS NOT AN UPDATE TO ANY OF THE BANNERHUB PROJECTS — AND IT IS NOT FOR MOST USERS.**
+>
+> If you have normal home internet, mobile data, or any reliable Wi-Fi, **you do not want this build.** Use [BannerHub](https://github.com/The412Banner/BannerHub), [BannerHub-Lite](https://github.com/The412Banner/BannerHub-Lite), or [BannerHub-ReVanced](https://github.com/The412Banner/bannerhub-revanced). Those have the full online catalog, online login for GOG/Epic/Amazon/Steam, online community game configs, online self-update, and a download size measured in megabytes instead of hundreds of megabytes.
+>
+> Nano Offline exists for the ~5–10% of users who genuinely **cannot** rely on the network at install/launch time:
+> - Rural or developing-region users on metered, intermittent, or non-existent connectivity
+> - Users who have to travel meaningful distances to a public Wi-Fi spot just to download anything
+> - Users in regions where the bannerhub-api host is blocked or unreachable
+>
+> If that's not you, this build trades **a ~700 MB APK** and **several broken features** (online search, self-update, community configs, GOG/Epic/Amazon logins in airplane mode) for one thing: the ability to add and launch a PC game with the radio off. That tradeoff is only worth it if you actually need it.
+>
+> The main BannerHub line (BannerHub, BannerHub-Lite, BannerHub-ReVanced) is **unaffected** by this release — those continue on their own release schedule.
 
 **A fully offline build of [BannerHub](https://github.com/The412Banner/BannerHub) v3.7.5.** Ships with an embedded HTTP server (NanoHttpd) that mirrors the static-route output of the bannerhub-api Cloudflare Worker locally on `127.0.0.1`. The app never reaches the network for its core install / launch flow — everything is served from inside the APK.
 
