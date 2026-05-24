@@ -82,6 +82,19 @@ If you grab additional compatibility layers via the v0.2 Compatibility Layers sc
 
 This is a derivative of [The412Banner/BannerHub](https://github.com/The412Banner/BannerHub) v3.7.5 with the offline-server changes layered on top. All the features from BannerHub 3.7.5 are present and patched the same way — only the API base URL and asset bundling differ.
 
+## Credits
+
+- **Embedded HTTP server** — [NanoHttpd](https://github.com/NanoHttpd/nanohttpd) (v2.3.1). The `127.0.0.1:51823` server that backs every offline catalog and binary fetch in this fork is the NanoHttpd library. Licensed under the **BSD-3-Clause** license: *Copyright (c) 2012-2016, NanoHttpd. All rights reserved.* The full license text is reproduced verbatim in [`extension/server/lib/LICENSE-nanohttpd`](extension/server/lib/LICENSE-nanohttpd) and ships inside every released APK. Per the BSD-3-Clause terms, neither the NanoHttpd name nor its contributors are used to endorse or promote this fork.
+- **GOG Games integration** — [The GameNative Team](https://github.com/utkarshdalal/GameNative). The GOG API pipeline, authentication flow, download architecture, and library sync in BannerHub are based on their research and implementation.
+- **Amazon Games integration** — [The GameNative Team](https://github.com/utkarshdalal/GameNative). The Amazon Games API pipeline, PKCE authentication flow, manifest.proto download architecture, exe scoring heuristic, FuelPump environment variables, and SDK DLL deployment in BannerHub are based on their research and implementation.
+- **Epic Games Store integration** — [The GameNative Team](https://github.com/utkarshdalal/GameNative). The Epic Games Store API pipeline, OAuth2 authentication flow, chunked manifest download architecture, CDN selection logic, and chunk assembly in BannerHub are based on their research and implementation.
+- **Epic Online Services (EOS) Phase 1** — [The GameNative Team](https://github.com/utkarshdalal/GameNative). The EOS launch-arguments injection (`-EpicPortal`, `-epicusername`, `-epicuserid`, `-epicsandboxid`, `-epiclocale`, `-epicdeploymentid` and the `-AUTH_LOGIN` / `-AUTH_PASSWORD` / `-AUTH_TYPE` exchange-code triple) plus the deployment-ID sidecar fetch in BannerHub v3.6.1 are a Java port of their work. Specifically, [PR #1286 / commit `cbea7f7`](https://github.com/utkarshdalal/GameNative/commit/cbea7f70be46e6f4a99a7e92db13c9b96add9c1c) ("Feat/eos overlay utkarsh"). Without GameNative's research and reverse-engineering of Epic's launcher protocols this feature wouldn't exist in BannerHub. **Phase 2** — the in-game EOS overlay UI (Epic friends popup / notifications / achievement toasts) — is still pending and will land in a future BannerHub release. **Please support GameNative: https://github.com/utkarshdalal/GameNative**
+- **Japanese translations** — [reindex-ot](https://github.com/reindex-ot) via Crowdin
+- **RTS Touch Controls** — [@Nightwalker743](https://github.com/Nightwalker743)
+- **GameHub ReVanced patches** — [@playday3008](https://github.com/playday3008/gamehub-patches)
+- **Winlator HUD** — [StevenMXZ](https://github.com/StevenMXZ). The Extra Detail HUD is a continuation and extension of the original Winlator HUD. Additional metrics were inspired by the built-in performance HUD of my personal device.
+- **Component sources** — [Arihany WCPHub](https://github.com/Arihany/WinlatorWCPHub), [The412Banner Nightlies](https://github.com/The412Banner/Nightlies), Kimchi, StevenMXZ, MaxesTechReview, Whitebelyash
+
 ## AI Disclaimer
 
 Smali edits, patches, and code changes in this project are developed with the assistance of **[Claude AI](https://www.anthropic.com/claude)** by Anthropic. Same disclaimer as upstream BannerHub — all changes are manually debugged and device-tested before any stable release.
