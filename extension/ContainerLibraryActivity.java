@@ -143,7 +143,10 @@ public class ContainerLibraryActivity extends Activity {
         }
 
         for (ContainerInfo c : all) {
-            listColumn.addView(buildRow(c));
+            // buildRow() attaches the row to listColumn itself (with its
+            // bottom-margin LayoutParams) — don't double-attach here or
+            // ViewGroup.addView throws "child already has a parent".
+            buildRow(c);
         }
     }
 
