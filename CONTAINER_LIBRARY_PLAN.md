@@ -3,16 +3,16 @@
 ## Status
 
 - **Branch:** `feature/compatibility-layers` (pushed to origin)
-- **Last completed:** Phase 2 — backend (ContainerInfo + ContainerLibrary + ContainerDownloader + ProgressListener) — compiles clean
-- **Next up:** Phase 3.1 — read `HomeLeftMenuDialog.smali` rows 1583+ and 3924+ to lift Epic/GOG/Amazon injection pattern
-- **Phases complete:** Phase 0 ✅, Phase 1 ✅, Phase 2 ✅ (Phase 3–6 pending)
+- **Last completed:** Phase 3 — UI Activity (drawer row + smali dispatcher + activity + manifest)
+- **Next up:** Phase 4 — trigger first CI build via `build-quick.yml` workflow_dispatch, verify clean assembly
+- **Phases complete:** Phase 0 ✅, Phase 1 ✅, Phase 2 ✅, Phase 3 ✅ (Phase 4–6 pending)
 
 | Phase                          | Jobs done | Total | Status      |
 | ------------------------------ | --------- | ----- | ----------- |
 | 0 — Writable catalogs          | 3         | 3     | ✅ complete |
 | 1 — known-containers.json      | 2         | 2     | ✅ complete |
 | 2 — Backend (ContainerLibrary) | 4         | 4     | ✅ complete |
-| 3 — UI Activity                | 0         | 5     | not started |
+| 3 — UI Activity                | 4         | 4     | ✅ complete |
 | 4 — CI + asset wiring          | 0         | 3     | not started |
 | 5 — Device test                | 0         | 1     | not started |
 | 6 — v0.2 release (gated)       | 0         | 5     | not started |
@@ -183,21 +183,29 @@ XML-layout-based Activity (no Compose — keeps it within extension-Java comfort
 
 ### Jobs
 
-- [ ] **3.1** Read `patches/smali_classes5/com/xj/landscape/launcher/ui/menu/HomeLeftMenuDialog.smali` rows 1583–1610 and 3924–3960 to lift the exact pattern (string label + class ref + id increment).
-- [ ] **3.2** Smali patch — inject "Compatibility Layers" row (id=13) and its click dispatcher in the same file. No drawable, no icon — text-only, matching Epic/GOG/Amazon visual treatment.
-- [ ] **3.3** `extension/ContainerLibraryActivity.java` in package `app.revanced.extension.gamehub` (matches existing convention so smali `const-class` resolves cleanly)
-  - Theme + layout cloned from `EpicMainActivity` / `GogMainActivity` / `AmazonMainActivity` (whichever is closest structurally to a list view)
-  - Single screen: toolbar + RecyclerView
-  - Row content: container name (bold), size info ("239 MB + 10 MB"), framework badge ("arm64X · proton"), state pill ("BUNDLED" / "INSTALLED" / Download button)
-  - Tapping Download → check `ConnectivityManager.getActiveNetwork() != null` directly (raw, bypasses our patched NetworkUtils); if airplane on, toast "Turn off airplane mode to download containers"
-  - Otherwise: show in-row progress bar, kick off `ContainerDownloader.download()` on background thread, post progress updates to main thread
-  - On complete: flip state pill to INSTALLED, call `ContainerLibrary.addToCatalog()`
-  - On error: toast with reason, revert state pill, clean up partial files
-- [ ] **3.4** Register `ContainerLibraryActivity` in `patches/AndroidManifest.xml`
-- [ ] **3.5** Layout XML under `patches/res/layout/`
-  - `activity_container_library.xml` (toolbar + RecyclerView)
-  - `item_container_row.xml` (row content)
-  - Reuse existing app theme colors; no new theme entries (clone from Epic/Gog/Amazon activity layouts)
+- [x] **3.1** Recon `HomeLeftMenuDialog.smali` — **DONE 2026-05-23**
+  - Click dispatcher at line 1576+ (pswitch_9 .. pswitch_13 already present for Component Manager + GOG=10 + Amazon=11 + Epic=12 + Game Configs=13)
+  - Row construction at line 3913+ (Components + GOG + Amazon + Epic + Game Configs blocks, all using `menu_setting_normal:I` icon)
+  - Packed-switch table at line 1626–1642 (`.packed-switch 0x0` listing labels in id order)
+  - **Critical correction:** id=13 (0xd) was TAKEN by "Game Configs" (this is nano's local addition). Plan-doc id=13 bumped to **id=14 (0xe)** for Compatibility Layers.
+- [x] **3.2** Smali patch — **DONE 2026-05-23** (3 edits to one file)
+  - Click dispatcher: added `:pswitch_14` block after `:pswitch_13` (Game Configs) — new-instance Intent → const-class `Lapp/revanced/extension/gamehub/ContainerLibraryActivity;` → invoke-direct init → startActivity → goto :goto_1
+  - Packed-switch table: appended `:pswitch_14` after `:pswitch_13` (the table is dense from 0x0, so id 0xe is the 15th entry — the new line)
+  - Row construction: added "Compatibility Layers" MenuItem (id=0xe, icon=menu_setting_normal, label string) right after Game Configs row
+- [x] **3.3** `extension/ContainerLibraryActivity.java` — **DONE 2026-05-23, compiles clean**
+  - Pure-Java UI (no XML layouts) — matches Epic/Gog/Amazon convention
+  - ScrollView + LinearLayout column; per-container row = horizontal LinearLayout with stacked text (name bold + meta "239 MB · X64 · proton" + dynamic status line) + right-side Button + ProgressBar
+  - State-driven button rendering: BUNDLED (gray, disabled), INSTALLED (green, disabled), NOT_INSTALLED (accent blue, "DOWNLOAD" → tap handler)
+  - Download tap: `ConnectivityManager.getActiveNetwork() + NetworkCapabilities.NET_CAPABILITY_INTERNET` check (raw, bypasses patched NetworkUtils per [[project_bannerhub_offline_nano]] build #6/#12/#13 patches). Airplane → toast.
+  - Online: button → "CANCEL" (red), progress visible, indeterminate during phases (Preparing/Verifying MD5/Updating catalog), determinate during actual downloads. Background `Thread` named "ContainerDL-{id}" runs ContainerDownloader; ProgressListener callbacks marshalled to UI thread via `runOnUiThread`.
+  - On complete: toast + `rebuildRows()` (full re-render reflects new INSTALLED state)
+  - On error: toast with reason + `rebuildRows()` (reverts to NOT_INSTALLED since downloader already cleaned up)
+  - Per-row RowViews holder in a Map<id, RowViews> so listener callbacks can find the views without view-tree lookups
+- [x] **3.4** Register `ContainerLibraryActivity` — **DONE 2026-05-23**
+  - One-line `<activity>` added to `patches/AndroidManifest.xml` after BhGameConfigsActivity
+  - Mirrors existing extension activity registration shape: `configChanges` for keyboard/orientation/screen-size + `screenOrientation="sensorLandscape"`
+  - Build wiring is automatic — `build-quick.yml:57` does `cp -r patches/. apktool_out/` wholesale before apktool b
+- [x] **3.5** Layout XML files — **ELIMINATED** (no XML layouts; UI is pure Java per Epic/Gog/Amazon convention)
 
 ### Acceptance
 
