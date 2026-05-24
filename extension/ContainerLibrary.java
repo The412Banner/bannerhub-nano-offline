@@ -104,20 +104,21 @@ public final class ContainerLibrary {
         }
 
         JSONObject envelope;
+        JSONArray arr;
         try {
             envelope = new JSONObject(raw);
-            JSONObject data = envelope.optJSONObject("data");
-            if (data == null) throw new IOException("malformed catalog: missing data");
-
-            Object listField = data.opt("list");
-            JSONArray arr;
-            if (listField instanceof String) {
-                arr = new JSONArray((String) listField);
-            } else if (listField instanceof JSONArray) {
-                arr = (JSONArray) listField;
-            } else {
-                arr = new JSONArray();
+            // 5.x getContainerList ships `data` as a DIRECT JSONArray of
+            // container objects. (The envelope-with-`.list` shape applies to
+            // getComponentList, which is a different endpoint — don't confuse
+            // them. See data/local-mirror-overrides/simulator/v2/getContainerList
+            // for the canonical shape, verified on device 2026-05-24.)
+            Object dataField = envelope.opt("data");
+            if (!(dataField instanceof JSONArray)) {
+                throw new IOException("malformed catalog: data is not a JSONArray (got "
+                        + (dataField == null ? "null" : dataField.getClass().getSimpleName())
+                        + ")");
             }
+            arr = (JSONArray) dataField;
 
             for (int i = 0; i < arr.length(); i++) {
                 JSONObject e = arr.optJSONObject(i);
@@ -127,18 +128,11 @@ public final class ContainerLibrary {
                 }
             }
             arr.put(c.toJson());
-
-            // Preserve the list-as-string encoding when that's how we found it
-            // (5.x shape — see BannerHubLocalServer.serveComponentListFiltered).
-            if (listField instanceof String) {
-                data.put("list", arr.toString());
-            } else {
-                data.put("list", arr);
-            }
-            data.put("total", arr.length());
-            envelope.put("data", data);
+            envelope.put("data", arr);
+        } catch (IOException ioe) {
+            throw ioe;
         } catch (Throwable t) {
-            throw new IOException("catalog parse/append failed", t);
+            throw new IOException("catalog parse/append failed: " + t.getMessage(), t);
         }
 
         File tmp = new File(catalog.getParentFile(), catalog.getName() + ".tmp");
@@ -208,23 +202,20 @@ public final class ContainerLibrary {
      *  the writable override). The override may contain entries we've appended
      *  via addToCatalog; those should appear as INSTALLED via the known-
      *  containers path with file-presence checks, not be re-classified as
-     *  BUNDLED here. data.list is a STRINGIFIED JSON array in the 5.x shape. */
+     *  BUNDLED here. 5.x shape: `data` is a DIRECT JSONArray of container
+     *  objects (NOT the getComponentList envelope-with-`.list` shape). */
     private static List<ContainerInfo> readBundled(Context ctx) {
         List<ContainerInfo> out = new ArrayList<>();
         try (InputStream in = ctx.getAssets().open(BUNDLED_CATALOG_ASSET)) {
             String raw = new String(readAll(in), "UTF-8");
             JSONObject env = new JSONObject(raw);
-            JSONObject data = env.optJSONObject("data");
-            if (data == null) return out;
-            Object listField = data.opt("list");
-            JSONArray arr;
-            if (listField instanceof String) {
-                arr = new JSONArray((String) listField);
-            } else if (listField instanceof JSONArray) {
-                arr = (JSONArray) listField;
-            } else {
+            Object dataField = env.opt("data");
+            if (!(dataField instanceof JSONArray)) {
+                Log.w(TAG, "readBundled: data is not a JSONArray; got "
+                        + (dataField == null ? "null" : dataField.getClass().getSimpleName()));
                 return out;
             }
+            JSONArray arr = (JSONArray) dataField;
             for (int i = 0; i < arr.length(); i++) {
                 ContainerInfo c = ContainerInfo.fromJson(arr.optJSONObject(i));
                 if (c != null) out.add(c);
