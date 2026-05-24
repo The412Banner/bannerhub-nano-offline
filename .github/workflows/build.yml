@@ -871,32 +871,32 @@ jobs:
       matrix:
         include:
           - variant: Normal
-            package: banner.hub
-            label: "BannerHub"
+            package: banner.nano.offline
+            label: "BannerHub Nano Offline"
           - variant: Normal(GHL)
             package: gamehub.lite
-            label: "BannerHub"
+            label: "BannerHub Nano Offline (GHL)"
           - variant: PuBG
             package: com.tencent.ig
-            label: "BannerHub PuBG"
+            label: "BannerHub Nano Offline PuBG"
           - variant: AnTuTu
             package: com.antutu.ABenchMark
-            label: "BannerHub AnTuTu"
+            label: "BannerHub Nano Offline AnTuTu"
           - variant: alt-AnTuTu
             package: com.antutu.benchmark.full
-            label: "BannerHub AnTuTu"
+            label: "BannerHub Nano Offline AnTuTu"
           - variant: PuBG-CrossFire
             package: com.tencent.tmgp.cf
-            label: "BannerHub PuBG CrossFire"
+            label: "BannerHub Nano Offline PuBG CrossFire"
           - variant: Ludashi
             package: com.ludashi.aibench
-            label: "BannerHub Ludashi"
+            label: "BannerHub Nano Offline Ludashi"
           - variant: Genshin
             package: com.miHoYo.GenshinImpact
-            label: "BannerHub Genshin"
+            label: "BannerHub Nano Offline Genshin"
           - variant: Original
             package: com.xiaoji.egggame
-            label: "BannerHub Original"
+            label: "BannerHub Nano Offline Original"
 
     steps:
       - name: Checkout
