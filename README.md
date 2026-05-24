@@ -47,6 +47,29 @@ The Cloudflare Worker that BannerHub normally talks to has been baked into the A
 
 See [`OFFLINE_NANO_DESIGN.md`](OFFLINE_NANO_DESIGN.md) for full architecture details.
 
+## Why is the APK ~700 MB?
+
+Most of it is files that BannerHub would normally download from `bannerhub-api` the first time you launch a game. Nano Offline ships those bytes inside the APK so the app can complete every install / mount step in airplane mode without ever touching the network. Concretely, of the ~703 MB Normal APK:
+
+| Slice                                                   | Size      | What it is                                                                 |
+|---------------------------------------------------------|-----------|----------------------------------------------------------------------------|
+| `assets/local-mirror/components-cdn/` (bundled archives)| **~561 MB** | Firmware + Proton 10.0 wineprefix + base wineprefix + curated component set |
+| `classes*.dex` (Java code)                              | ~106 MB   | The BannerHub 3.7.5 app itself + our extension classes                     |
+| `lib/arm64-v8a/` (native libs)                          | ~56 MB    | ffmpeg, WebRTC, etc. — shipped by upstream BannerHub                       |
+| Fonts, resources, signing, etc.                         | the rest  |                                                                            |
+
+The three single largest files account for **~400 MB**:
+
+| File                                | Size    | Why it's there                                                       |
+|-------------------------------------|---------|----------------------------------------------------------------------|
+| `imagefs_141.zst`                   | 164 MB  | Firmware 1.4.1 — the Linux rootfs every container mounts on top of   |
+| `wine_proton_10.0_x64.tar.zst`      | 157 MB  | The bundled Proton 10 wineprefix (so airplane install works out of the box) |
+| `base_v101.tzst`                    | 79 MB   | Base wineprefix the Proton layer overlays                            |
+
+Everything else in `components-cdn/` is the curated component set: 5 translators (Box64 / FEX), 8 DXVK variants, 5 VKD3D variants, 6 GPU drivers, the firmware/Wine deps. Each is small individually (~5–15 MB) but BannerHub's per-category pickers need a representative subset bundled or the picker shows nothing in airplane mode.
+
+If you grab additional compatibility layers via the v0.2 Compatibility Layers screen, they download to `/data/data/banner.nano.offline/files/local-mirror/components-cdn/` (~150–220 MB each) — those live outside the APK, so the APK file itself stays at the size shown on the release page no matter how many layers you've added.
+
 ## Installation
 
 1. Download the latest APK from the [Releases page](https://github.com/The412Banner/bannerhub-nano-offline/releases/latest)
