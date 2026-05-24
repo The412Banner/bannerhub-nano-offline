@@ -3,14 +3,14 @@
 ## Status
 
 - **Branch:** `feature/compatibility-layers` (pushed to origin)
-- **Last completed:** Phase 0 — writable catalogs fully wired (server now files-first / asset-fallback)
-- **Next up:** Phase 1.1 + 1.2 — bake `known-containers.json` into APK assets
-- **Phases complete:** Phase 0 ✅ (Phase 1–6 pending)
+- **Last completed:** Phase 1 — `known-containers.json` baked into APK assets (both build workflows)
+- **Next up:** Phase 2.1 — `ContainerInfo` POJO + `State` enum
+- **Phases complete:** Phase 0 ✅, Phase 1 ✅ (Phase 2–6 pending)
 
 | Phase                          | Jobs done | Total | Status      |
 | ------------------------------ | --------- | ----- | ----------- |
 | 0 — Writable catalogs          | 3         | 3     | ✅ complete |
-| 1 — known-containers.json      | 0         | 2     | not started |
+| 1 — known-containers.json      | 2         | 2     | ✅ complete |
 | 2 — Backend (ContainerLibrary) | 0         | 4     | not started |
 | 3 — UI Activity                | 0         | 5     | not started |
 | 4 — CI + asset wiring          | 0         | 3     | not started |
@@ -107,12 +107,17 @@ Bake the 9 user-pasted strings as a single JSON file shipped in the APK.
 
 ### Jobs
 
-- [ ] **1.1** Create `data/known-containers.json` — convert the 9 XML-wrapped JSON strings into a single normalized JSON array
-  - One per entry, fields: id, display_name, name, framework, framework_type, file_md5, file_name, file_size, download_url, sub_data{sub_file_md5, sub_file_name, sub_download_url}, version, version_code, is_steam, logo
-  - Strip the outer `state`/`version` wrapper and the `entry.fileType` (=3 redundant with framework_type)
-  - Add per-entry `download_hint` field (optional URL string — for the v0.3+ "where to get this manually" path; can be omitted now)
-- [ ] **1.2** Build step copies `data/known-containers.json` → `assets/local-mirror/known-containers.json` during APK assembly
-  - Add to existing `prepare_local_mirror.py` or a new tiny step in `build-quick.yml` + `build.yml`
+- [x] **1.1** `data/known-containers.json` written — **DONE 2026-05-23**
+  - 9 entries (IDs 2, 3, 4, 5, 6, 7, 8, 9, 11); id 10 (proton10.0-x64-1) intentionally absent — already bundled
+  - Outer `state`/`version` wrapper + `entry.fileType` (=3) stripped per design
+  - `is_steam` preserved verbatim (1 for proton/arm64x entries, 2 for wine/x64 stable)
+  - Three `_comment` keys at the top capture intent: catalog purpose, target release, and the steamuser/xuser md5-shape quirk warning ([[project_bannerhub_api_proton_x64_subdata_fix]])
+  - Validated as JSON (`python3 -c "import json; json.load(open(...))"`)
+  - `download_hint` field NOT added — current design fetches from `download_url` directly; the v0.3+ manual-source hint path can append the field later without churning the catalog
+- [x] **1.2** Build workflow copies the asset — **DONE 2026-05-23**
+  - `build-quick.yml` step "Bundle local API mirror" gets a one-liner `cp data/known-containers.json apktool_out/assets/local-mirror/known-containers.json` right after the `prepare_local_mirror.py` invocation
+  - `build.yml` gets the same one-liner targeting `apktool_out_base/` per [[feedback_bannerhub_buildyml_paths]]
+  - Comment notes: the asset is NOT served by the embedded NanoHTTPD; ContainerLibraryActivity reads it directly from `AssetManager` at runtime to populate the downloadable list
 
 ### Acceptance
 

@@ -900,6 +900,11 @@ jobs:
             --base-url http://127.0.0.1:51823 \
             --overrides-dir data/local-mirror-overrides \
             --bundled-components data/bundled-components.json
+          # Drop the Container Library catalog alongside the API mirror.
+          # ContainerLibraryActivity reads this asset at runtime to populate the
+          # downloadable-compat-layers list; not served by the embedded NanoHTTPD,
+          # just unzipped from APK on demand.
+          cp data/known-containers.json apktool_out/assets/local-mirror/known-containers.json
           # Refresh cache dir so the next run sees this APK's CDN payload.
           mkdir -p cdn-cache
           cp -al apktool_out/assets/local-mirror/components-cdn/. cdn-cache/ 2>/dev/null \
