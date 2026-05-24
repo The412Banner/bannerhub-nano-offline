@@ -19,10 +19,12 @@ import static fi.iki.elonen.NanoHTTPD.newFixedLengthResponse;
 /**
  * Serves component binary files (.wcp / .tzst) from the user's local storage.
  * Search order:
- *   1. context.getFilesDir()/components/&lt;file&gt;
- *   2. context.getExternalFilesDir(null)/components/&lt;file&gt;
- *   3. /sdcard/BannerHub/components/&lt;file&gt;
- *   4. APK assets/local-mirror/components-cdn/&lt;file&gt; (bundled fallback)
+ *   1. context.getFilesDir()/local-mirror/components-cdn/&lt;file&gt;  (writable runtime
+ *      mirror; where ContainerLibrary writes downloaded compat-layer archives)
+ *   2. context.getFilesDir()/components/&lt;file&gt;
+ *   3. context.getExternalFilesDir(null)/components/&lt;file&gt;
+ *   4. /sdcard/BannerHub/components/&lt;file&gt;
+ *   5. APK assets/local-mirror/components-cdn/&lt;file&gt; (bundled fallback)
  *
  * HTTP Range support is required because Aria's HttpDThreadTaskAdapter
  * probes for byte-range support up front. When the server replies with a
@@ -145,6 +147,7 @@ final class LocalCdnServer {
 
     private File locate(String filename) {
         File[] candidates = new File[] {
+                new File(ctx.getFilesDir(), "local-mirror/components-cdn/" + filename),
                 new File(ctx.getFilesDir(), "components/" + filename),
                 externalFilesDir(filename),
                 new File(Environment.getExternalStorageDirectory(),

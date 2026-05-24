@@ -3,13 +3,13 @@
 ## Status
 
 - **Branch:** `feature/compatibility-layers` (pushed to origin)
-- **Last completed:** Plan committed (`e5654fc`) + branch pushed (2026-05-23)
-- **Next up:** Phase 0.4 (cache check) → Phase 0.1–0.3 (writable-catalog extraction)
-- **Phases complete:** none yet (Phase 0–6 all pending)
+- **Last completed:** Phase 0 — writable catalogs fully wired (server now files-first / asset-fallback)
+- **Next up:** Phase 1.1 + 1.2 — bake `known-containers.json` into APK assets
+- **Phases complete:** Phase 0 ✅ (Phase 1–6 pending)
 
 | Phase                          | Jobs done | Total | Status      |
 | ------------------------------ | --------- | ----- | ----------- |
-| 0 — Writable catalogs          | 0         | 4     | not started |
+| 0 — Writable catalogs          | 3         | 3     | ✅ complete |
 | 1 — known-containers.json      | 0         | 2     | not started |
 | 2 — Backend (ContainerLibrary) | 0         | 4     | not started |
 | 3 — UI Activity                | 0         | 5     | not started |
@@ -73,23 +73,24 @@ IDs stay canonical (no offset) so game launch configs referencing e.g. container
 
 **Blocker for everything else.** Server currently reads catalog JSONs from read-only APK assets. We need them writable.
 
-**Strategy:** extract **catalog JSONs only** (small, ~MBs) at first launch — leave the binary `.tzst`/`.zst` archives in APK assets (~588 MB, would be slow to copy). Server reads catalogs from `files/components-cdn/`, binaries from `files/` first then falls back to `assets/`.
+**Strategy (simplified after Phase 0.4 recon):** Recon confirmed there is no in-memory cache anywhere in `LocalAssetServer` / `BannerHubLocalServer` / `LocalCdnServer` — every request fresh-reads from `AssetManager`. So we only need to teach the asset server to look in a writable mirror first, and lazy-extract individual catalog files on first mutation (no first-launch bulk extraction needed). Binaries already use a files-first chain in `LocalCdnServer.locate()`; we'll add the new writable mirror dir to that chain too.
+
+**Writable mirror path:** `/data/data/banner.nano.offline/files/local-mirror/` — exact shape match to `assets/local-mirror/` so the override is a 1:1 path swap.
 
 ### Jobs
 
-- [ ] **0.1** New extension class `extension/server/AssetExtractor.java`
-  - On first run (sentinel file `files/.catalogs-extracted-vN`), iterate `assets/local-mirror/components-cdn/` for JSON files only and copy to `/data/data/banner.nano.offline/files/components-cdn/`
-  - Sentinel includes APK versionCode so a future APK upgrade re-extracts on first launch (covers shipped catalog updates)
-- [ ] **0.2** Hook AssetExtractor into Application.onCreate, before BannerHubLocalServer.start()
-  - Smali edit to existing patched Application class, or attach to first request via lazy init in BannerHubLocalServer.serve()
-- [ ] **0.3** Update `BannerHubLocalServer` catalog paths
-  - Catalog reads: `files/components-cdn/<name>` first, fall back to `assets/local-mirror/components-cdn/<name>`
-  - Binary reads (`LocalCdnServer`): `files/components-cdn/<name>` first, fall back to `assets/local-mirror/components-cdn/<name>` via `AssetManager.openFd()`
-- [ ] **0.4** Verify catalog hot-reload works **(NOTE: open question — verify in this job)**
-  - Read `extension/server/LocalAssetServer.java` and `BannerHubLocalServer.java` and confirm whether catalog responses are cached in memory between requests, or re-read from disk on every request
-  - If always re-reads → no work needed
-  - If caches in memory → add a `lastModified()`-based invalidation (cheap stat call per request), or just remove the cache (catalog files are tiny, IO cost is negligible)
-  - Acceptance: touch `files/components-cdn/getContainerList.json` between two `curl 127.0.0.1:51823/simulator/v2/getContainerList` hits, confirm second hit sees the modified content
+- [x] **0.4** Verify whether catalog responses are cached — **DONE 2026-05-23 (no work needed)**
+  - Read both `LocalAssetServer.java` (`serve()` + `readAsString()`) and `BannerHubLocalServer.serveComponentListFiltered()`: every code path calls `AssetManager.open()` fresh, builds a new byte array, returns a new `Response`. No in-memory cache anywhere. Hot-reload comes for free as soon as we point reads at the filesystem.
+  - Runtime acceptance check (curl twice with a `touch` between) deferred to Phase 5 device test once the mutation UI exists.
+- [x] **0.1** `LocalAssetServer` files-first / asset-fallback — **DONE 2026-05-23**
+  - Both `serve(path)` and `readAsString(path)` now check `files/local-mirror/<path>` first via `FileInputStream`, fall back to `AssetManager.open("local-mirror/" + path)` on miss/error
+  - Added `FILES_MIRROR_DIR` package-visible constant for ContainerLibrary to reuse when writing
+  - Javadoc updated to document the new lookup order
+- [x] **0.2** `LocalCdnServer.locate()` extended — **DONE 2026-05-23**
+  - Added `files/local-mirror/components-cdn/<filename>` as first candidate in the chain
+  - Existing `files/components/`, externalFilesDir, sdcard slots preserved (back-compat)
+  - Class-level Javadoc updated to reflect the new 5-slot search order
+- [x] **0.3** No first-launch bulk extractor — folded into ContainerLibrary in Phase 2 (lazy copy on first mutation)
 
 ### Acceptance
 
