@@ -1,0 +1,21 @@
+{
+  "code": 200,
+  "msg": "",
+  "time": "",
+  "data": [
+    {
+      "id": 13,
+      "name": "​​PC Emulator​​",
+      "icon": "http://127.0.0.1:51823/components-cdn/pc-emulator-icon.png",
+      "type": 7,
+      "back_img": "http://127.0.0.1:51823/components-cdn/bannerhub-api-logo.jpg"
+    },
+    {
+      "id": 9,
+      "name": "Steam",
+      "icon": "http://127.0.0.1:51823/components-cdn/steam-icon.png",
+      "type": 5,
+      "back_img": "http://127.0.0.1:51823/components-cdn/steam-back-img.jpg"
+    }
+  ]
+}
