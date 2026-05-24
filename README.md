@@ -32,14 +32,28 @@ Install the APK, add your `.wcp` components via the in-app Component Manager, ad
 
 ## What does not work offline
 
-These features need internet by design and will fail gracefully in airplane mode. With an internet connection they work as they do in upstream BannerHub:
+The features below sit in one of two categories. The first set still works the same as upstream BannerHub when you have internet — they each use their own HTTP client and bypass the embedded local server entirely. The second set is **broken regardless of internet state in this build**, because the patched `GameHubPrefs.getEffectiveApiUrl()` unconditionally points the global Drake.Net Retrofit client at `127.0.0.1:51823`, so any feature that uses that client gets a 404 from the local server (which only implements the static catalogs needed to launch a PC game).
 
-- ⚠️ **Internet required** — Compatibility Layers initial download (one-time online fetch per non-bundled layer; the bytes are then served locally forever)
-- ❌ **Internet required** — GOG Games / Epic Games / Amazon Games store login + downloads (OAuth + CDN)
-- ❌ **Internet required** — Community game configs browser (settings sharing)
-- ❌ **Internet required** — Steam library augmentation (Steam Community feed)
-- ❌ **Internet required** — App self-update check
-- ❌ **Internet required** — Token refresh / online game search
+### ⚠️ Internet required — work with internet, fail in airplane mode
+
+These each have their own OkHttp or HttpURLConnection client that talks to its provider directly:
+
+- ⚠️ **Internet required** — Compatibility Layers initial download (one-time fetch per non-bundled layer from `github.com` via `ContainerDownloader`; the bytes are then served locally forever)
+- ⚠️ **Internet required** — GOG Games login + downloads (`GogApiClient` / `GogAuthClient` / `GogDownloadManager` → `gog.com`)
+- ⚠️ **Internet required** — Epic Games login + downloads (`EpicApiClient` / `EpicAuthClient` / `EpicDownloadManager` → `epicgames.com`)
+- ⚠️ **Internet required** — Amazon Games login + downloads (`AmazonApiClient` / `AmazonAuthClient` / `AmazonDownloadManager` → `amazon.com`)
+- ⚠️ **Internet required** — Community game configs browser (`BhGameConfigsActivity` → `bannerhub-configs-worker.the412banner.workers.dev` + `raw.githubusercontent.com` + Steam Store search)
+
+### ❌ Broken regardless of internet — routed to local server, returns 404
+
+These use Drake.Net's global Retrofit instance, which is forcibly routed to `127.0.0.1:51823`:
+
+- ❌ **Broken in this build** — App self-update check (`ApkUpdateUtils.checkUpdate` via Drake.Net)
+- ❌ **Broken in this build** — Token refresh for the official Xiaoji login (`TokenProvider.refreshTokenForOfficialApi` → defers to upstream Drake.Net path)
+- ❌ **Broken in this build** — Online game search through the Xiaoji backend (`SearchGameRepositoryV4` via Drake.Net)
+- ❌ **Broken in this build** — Steam Community feed augmentation in the launcher UI (routes through Drake.Net for the BannerHub-side calls; in-game Steam network traffic via the JavaSteam library is unaffected and still works in-container with internet)
+
+If you specifically need any of these, run upstream [BannerHub](https://github.com/The412Banner/BannerHub) instead — this fork's whole point is to trade them for a self-contained APK that launches PC games in airplane mode.
 
 ## How it works
 
